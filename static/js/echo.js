@@ -106,7 +106,7 @@ function insert_local_message(message_request, local_id) {
 
     local_message.insert_message(message);
 
-    return message.local_id;
+    return message.local_id.toString();
 }
 
 exports.is_slash_command = function (content) {
@@ -184,7 +184,7 @@ exports.reify_message_id = function reify_message_id(local_id, server_id) {
     message.id = server_id;
     message.locally_echoed = false;
 
-    var opts = {old_id: local_id, new_id: server_id};
+    var opts = {old_id: parseFloat(local_id), new_id: server_id};
 
     message_store.reify_message_id(opts);
     notifications.reify_message_id(opts);
@@ -228,6 +228,7 @@ exports.process_from_server = function process_from_server(messages) {
         // the backend.
         client_message.timestamp = message.timestamp;
 
+        util.set_topic_links(client_message, util.get_topic_links(message));
         client_message.is_me_message = message.is_me_message;
         client_message.submessages = message.submessages;
 

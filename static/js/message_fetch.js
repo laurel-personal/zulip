@@ -108,8 +108,9 @@ function get_messages_success(data, opts) {
 // instead of emails string if it is supported. We currently don't set
 // or convert the emails string to user IDs directly into the Filter code
 // because doing so breaks the app in various modules that expect emails string.
-function handle_user_ids_supported_operators(data) {
-    var user_ids_supported_operators = ['pm-with'];
+function handle_operators_supporting_id_based_api(data) {
+    var operators_supporting_ids = ['pm-with'];
+    var operators_supporting_id = ['sender', 'group-pm-with', 'stream'];
 
     if (data.narrow === undefined) {
         return data;
@@ -117,8 +118,25 @@ function handle_user_ids_supported_operators(data) {
 
     data.narrow = JSON.parse(data.narrow);
     data.narrow = _.map(data.narrow, function (filter) {
-        if (user_ids_supported_operators.indexOf(filter.operator) !== -1) {
+        if (operators_supporting_ids.indexOf(filter.operator) !== -1) {
             filter.operand = people.emails_strings_to_user_ids_array(filter.operand);
+        }
+
+        if (operators_supporting_id.indexOf(filter.operator) !== -1) {
+            if (filter.operator === 'stream') {
+                const stream_id = stream_data.get_stream_id(filter.operand);
+                if (stream_id !== undefined) {
+                    filter.operand = stream_id;
+                }
+
+                return filter;
+            }
+
+            // The other operands supporting object IDs all work with user objects.
+            var person = people.get_by_email(filter.operand);
+            if (person !== undefined) {
+                filter.operand = person.user_id;
+            }
         }
 
         return filter;
@@ -162,7 +180,7 @@ exports.load_messages = function (opts) {
     }
 
     data.client_gravatar = true;
-    data = handle_user_ids_supported_operators(data);
+    data = handle_operators_supporting_id_based_api(data);
 
     channel.get({
         url: '/json/messages',

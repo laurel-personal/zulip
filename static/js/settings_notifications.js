@@ -73,6 +73,10 @@ exports.desktop_icon_count_display_values = {
         code: 2,
         description: i18n.t("Private messages and mentions"),
     },
+    none: {
+        code: 3,
+        description: i18n.t("None"),
+    },
 };
 
 function change_notification_setting(setting, setting_data, status_element) {
@@ -83,8 +87,8 @@ function change_notification_setting(setting, setting_data, status_element) {
 
 function update_desktop_icon_count_display() {
     $("#desktop_icon_count_display").val(page_params.desktop_icon_count_display);
-    var res = unread.get_counts();
-    notifications.update_title_count(res);
+    var count = unread.get_notifiable_count();
+    notifications.update_title_count(count);
 }
 
 exports.set_enable_digest_emails_visibility = function () {

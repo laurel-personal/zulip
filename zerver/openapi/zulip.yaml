@@ -334,7 +334,7 @@ paths:
           items:
             type: object
           default: []
-        example: [{"operator": "sender", "operand"}]
+        example: [{"operand": "Denmark", "operator": "stream"}]
       - name: client_gravatar
         in: query
         description: Whether the client supports computing gravatars URLs.  If enabled,
@@ -1048,6 +1048,99 @@ paths:
                         "result": "success",
                         "msg": ""
                     }
+  /users/me:
+    get:
+      description: Get the requesting user's profile data from the backend.
+      security:
+      - basicAuth: []
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/JsonSuccess'
+                - properties:
+                    client_id:
+                      type: string
+                      description: NA
+                      example: "74c768b081076fdb3c4326256c17467e"
+                    email:
+                      type: string
+                      description: Email of the requesting user.
+                      example: "iago@zulip.com"
+                    full_name:
+                      type: string
+                      description: Full name of the requesting user.
+                      example: "Iago"
+                    is_admin:
+                      type: boolean
+                      description: A boolean indicating if the requesting user is an admin.
+                      example: true
+                    is_bot:
+                      type: boolean
+                      description: A boolean indicating if the requesting user is a bot.
+                      example: false
+                    max_message_id:
+                      type: integer
+                      description: NA.
+                      example: 30
+                    pointer:
+                      type: integer
+                      description: NA
+                      example: -1
+                    short_name:
+                      type: string
+                      description: Short name of the requesting user.
+                      example: "iago"
+                    user_id:
+                      type: integer
+                      description: The user's ID.
+                      example: 1
+                - example:
+                    {
+                        "client_id": "74c768b081076fdb3c4326256c17467e",
+                        "email": "iago@zulip.com",
+                        "full_name": "Iago",
+                        "is_admin": true,
+                        "is_bot": false,
+                        "max_message_id": 30,
+                        "msg": "",
+                        "pointer": -1,
+                        "result": "success",
+                        "short_name": "iago",
+                        "user_id": 5
+                    }
+    delete:
+      description: Delete the requesting user from the realm.
+      security:
+      - basicAuth: []
+      responses:
+        '200':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/JsonSuccess'
+                - example:
+                    {
+                      "msg": "",
+                      "result": "success",
+                    }
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/JsonError'
+                - example:
+                    {
+                        "msg": "Cannot deactivate the only organization administrator",
+                        "result": "error"
+                    }
   /users/me/{stream_id}/topics:
     get:
       description: Get all the topics in a specific stream.
@@ -1115,6 +1208,79 @@ paths:
                         "result": "error"
                     }
   /users/me/subscriptions:
+    get:
+      description: Get information on every stream the user is subscribed to.
+      parameters:
+      - name: include_subscribers
+        in: query
+        description: Set to `true` if you would like each stream's info to include a
+          list of current subscribers to that stream. (This may be significantly slower
+          in organizations with thousands of users.)
+        schema:
+          type: boolean
+          default: false
+        example: true
+      security:
+      - basicAuth: []
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/JsonSuccess'
+                - properties:
+                    subscriptions:
+                      type: array
+                      items:
+                        type: object
+                - example:
+                    {
+                      "msg": "",
+                      "result": "success",
+                      "subscriptions": [
+                        {
+                          "audible_notifications": true,
+                          "color": "#e79ab5",
+                          "description": "A Scandinavian country",
+                          "desktop_notifications": true,
+                          "email_address": "Denmark+187b4125ed36d6af8b5d03ef4f65c0cf@zulipdev.com:9981",
+                          "in_home_view": true,
+                          "invite_only": false,
+                          "name": "Denmark",
+                          "pin_to_top": false,
+                          "push_notifications": false,
+                          "stream_id": 1,
+                          "subscribers": [
+                              "ZOE@zulip.com",
+                              "hamlet@zulip.com",
+                              "iago@zulip.com",
+                              "othello@zulip.com",
+                              "prospero@zulip.com"
+                          ]
+                        },
+                        {
+                          "audible_notifications": true,
+                          "color": "#e79ab5",
+                          "description": "Located in the United Kingdom",
+                          "desktop_notifications": true,
+                          "email_address": "Scotland+f5786390183e60a1ccb18374f9d05649@zulipdev.com:9981",
+                          "in_home_view": true,
+                          "invite_only": false,
+                          "name": "Scotland",
+                          "pin_to_top": false,
+                          "push_notifications": false,
+                          "stream_id": 3,
+                          "subscribers": [
+                              "ZOE@zulip.com",
+                              "iago@zulip.com",
+                              "othello@zulip.com",
+                              "prospero@zulip.com"
+                          ]
+                        }
+                      ]
+                    }
     post:
       description: Subscribe one or more users to one or more streams.
       parameters:
@@ -1139,15 +1305,6 @@ paths:
           type: boolean
           default: false
         example: true
-      - name: announce
-        in: query
-        description: If `announce` is `True` and one of the streams specified
-          in `subscriptions` has to be created (i.e. doesn't exist to begin
-          with), an announcement will be made notifying that a new stream was
-          created.
-        schema:
-          type: boolean
-        example: true
       - name: principals
         in: query
         description: A list of email addresses of the users that will be
@@ -1171,6 +1328,31 @@ paths:
           type: boolean
           default: true
         example: false
+      - name: history_public_to_subscribers
+        in: query
+        description: A boolean indicating if the history should be available to
+          newly subscribed members.
+        schema:
+          type: boolean
+          default: None
+        example: false
+      - name: is_announcement_only
+        in: query
+        description: A boolean indicating if the stream is an announcements only stream.
+          Only organization admins can post to announcements only streams.
+        schema:
+          type: boolean
+          default: false
+        example: false
+      - name: announce
+        in: query
+        description: If `announce` is `True` and one of the streams specified
+          in `subscriptions` has to be created (i.e. doesn't exist to begin
+          with), an announcement will be made notifying that a new stream was
+          created.
+        schema:
+          type: boolean
+        example: true
       security:
       - basicAuth: []
       responses:
@@ -1239,6 +1421,46 @@ paths:
                             "private_stream"
                         ]
                     }
+    patch:
+      description: Update which streams you are are subscribed to.
+      parameters:
+        - name: delete
+          in: query
+          description: A list of stream names to unsubscribe from.
+          schema:
+            type: array
+            items:
+              type: string
+          example: ['Verona', 'Denmark']
+          required: false
+        - name: add
+          in: query
+          description: A list of objects describing which streams to subscribe to,
+            optionally including per-user subscription parameters (e.g. color)
+            and if the stream is to be created, its description.
+          schema:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                color:
+                  type: string
+                description:
+                  type: string
+          example:
+            [
+              {
+                "name": "Verona"
+              },
+              {
+                "name": "Denmark",
+                "color": "#e79ab5",
+                "description": "A Scandinavian country",
+              }
+            ]
+          required: false
     delete:
       description: Unsubscribe yourself or other users from one or more
         streams.
@@ -1310,7 +1532,7 @@ paths:
         to.
       parameters:
       - name: stream
-        in: query_function
+        in: query
         description: The name of the stream in which to mute the topic.
         schema:
           type: string
@@ -1374,6 +1596,7 @@ paths:
       description: Upload a single emoji file.
       parameters:
       - name: emoji_name
+        required: true
         in: path
         description: The name that should be associated with the uploaded
           emoji image/gif.
@@ -1505,10 +1728,9 @@ paths:
                       items:
                         type: array
                         items:
-                          type:
-                            anyOf:
-                            - string
-                            - integer
+                          oneOf:
+                            - type: string
+                            - type: integer
                       description: An array of tuples, each representing one of the
                         linkifiers set up in the organization. Each of these tuples contain the
                         pattern, the formatted URL and the filter's ID, in that order. See
@@ -1626,7 +1848,9 @@ paths:
           your client code. For most applications, one is only interested in
           messages, so one specifies: `event_types=['message']`"
         schema:
-          type: string
+          type: array
+          items:
+            type: string
         example: event_types=['message']
       - name: all_public_streams
         in: query
@@ -1651,7 +1875,9 @@ paths:
           `fetch_event_types` is not provided, `event_types` is used and if
           `event_types` is not provided, this argument defaults to `None`.
         schema:
-          type: string
+          type: array
+          items:
+            type: string
         example: event_types=['message']
       - name: narrow
         in: query
@@ -1661,7 +1887,11 @@ paths:
           `narrow=['stream', 'Denmark']`. Another example is
           `narrow=['is', 'private']` for private messages.
         schema:
-          type: string
+          type: array
+          items:
+            anyOf:
+            - type: string
+            - type: integer
           default: narrow=[]
         example: narrow=['stream', 'Denmark']
       security:
@@ -2221,6 +2451,8 @@ paths:
         description: An array containing the user IDs of the initial members for the new user group.
         schema:
           type: array
+          items:
+            type: integer
         example: [1, 2, 3, 4]
         required: true
       security:

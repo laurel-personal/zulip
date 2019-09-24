@@ -3,15 +3,15 @@ var realm_logo = (function () {
     var exports = {};
 
     exports.build_realm_logo_widget = function (upload_function, is_night) {
-        var selector_prefix = '#realm_';
+        var logo_section_id = '#day-logo-section';
         if (is_night) {
-            selector_prefix = '#realm_night_';
+            logo_section_id = '#night-logo-section';
         }
 
-        var delete_button_elem = $(selector_prefix + "logo_delete_button");
-        var file_input_elem = $(selector_prefix + "logo_file_input");
-        var file_input_error_elem = $(selector_prefix + "logo_file_input_error");
-        var upload_button_elem = $(selector_prefix + "logo_upload_button");
+        var delete_button_elem = $(logo_section_id + " .realm-logo-delete-button");
+        var file_input_elem = $(logo_section_id + " .realm-logo-file-input");
+        var file_input_error_elem = $(logo_section_id + " .realm-logo-file-input-error");
+        var upload_button_elem = $(logo_section_id + " .realm-logo-upload-button");
 
         var get_file_input = function () {
             return file_input_elem.expectOne();
@@ -42,10 +42,21 @@ var realm_logo = (function () {
         );
     };
 
+    function change_logo_delete_button(logo_source, logo_delete_button, file_input) {
+        if (logo_source === 'U') {
+            logo_delete_button.show();
+        } else {
+            logo_delete_button.hide();
+            // Need to clear input because of a small edge case
+            // where you try to upload the same image you just deleted.
+            file_input.val('');
+        }
+    }
+
     exports.rerender = function () {
-        var file_input = $("#realm_logo_file_input");
-        var night_file_input = $("#realm_night_logo_file_input");
-        $("#realm-settings-logo").attr("src", page_params.realm_logo_url);
+        var file_input = $("#day-logo-section .realm-logo-file-input");
+        var night_file_input = $("#night-logo-section .realm-logo-file-input");
+        $("#day-logo-section .realm-logo-img").attr("src", page_params.realm_logo_url);
 
         if (page_params.realm_night_logo_source === 'D' &&
             page_params.realm_logo_source !== 'D') {
@@ -54,9 +65,9 @@ var realm_logo = (function () {
             // of transparent background logos that look good on both
             // night and day themes.  See also similar code in admin.js.
 
-            $("#realm-settings-night-logo").attr("src", page_params.realm_logo_url);
+            $("#night-logo-section .realm-logo-img").attr("src", page_params.realm_logo_url);
         } else {
-            $("#realm-settings-night-logo").attr("src", page_params.realm_night_logo_url);
+            $("#night-logo-section .realm-logo-img").attr("src", page_params.realm_night_logo_url);
         }
 
         if (page_params.night_mode && page_params.realm_night_logo_source !== 'D') {
@@ -64,23 +75,13 @@ var realm_logo = (function () {
         } else {
             $("#realm-logo").attr("src", page_params.realm_logo_url);
         }
-        if (page_params.realm_logo_source === 'U') {
-            $("#realm_logo_delete_button").show();
-        } else {
-            $("#realm_logo_delete_button").hide();
-            // Need to clear input because of a small edge case
-            // where you try to upload the same image you just deleted.
-            file_input.val('');
-        }
-        if (page_params.realm_night_logo_source === 'U') {
-            $("#realm_night_logo_delete_button").show();
-        } else {
-            $("#realm_night_logo_delete_button").hide();
-            // Need to clear input because of a small edge case
-            // where you try to upload the same image you just deleted.
-            night_file_input.val('');
-        }
 
+        change_logo_delete_button(page_params.realm_logo_source,
+                                  $("#day-logo-section .realm-logo-delete-button"),
+                                  file_input);
+        change_logo_delete_button(page_params.realm_night_logo_source,
+                                  $("#night-logo-section .realm-logo-delete-button"),
+                                  night_file_input);
     };
 
     return exports;

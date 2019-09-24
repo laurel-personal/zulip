@@ -14,6 +14,15 @@ exports.reset = function () {
     meta.loaded = false;
 };
 
+function compare_a_b(a, b) {
+    if (a > b) {
+        return 1;
+    } else if (a === b) {
+        return 0;
+    }
+    return -1;
+}
+
 function get_user_info_row(user_id) {
     return $("tr.user_row[data-user-id='" + user_id + "']");
 }
@@ -105,6 +114,20 @@ function failed_listing_users(xhr) {
     ui_report.error(i18n.t("Error listing users or bots"), xhr, status);
 }
 
+var LAST_ACTIVE_NEVER = -1;
+var LAST_ACTIVE_UNKNOWN = -2;
+
+function get_last_active(user) {
+    var presence_info = presence.presence_info[user.user_id];
+    if (!presence_info) {
+        return LAST_ACTIVE_UNKNOWN;
+    }
+    if (!isNaN(presence_info.last_active)) {
+        return presence_info.last_active;
+    }
+    return LAST_ACTIVE_NEVER;
+}
+
 function populate_users(realm_people_data) {
     var active_users = [];
     var deactivated_users = [];
@@ -116,6 +139,7 @@ function populate_users(realm_people_data) {
             user.bot_type = settings_bots.type_id_to_string(user.bot_type);
             bots.push(user);
         } else if (user.is_active) {
+            user.last_active = get_last_active(user);
             active_users.push(user);
         } else {
             deactivated_users.push(user);
@@ -133,10 +157,15 @@ function populate_users(realm_people_data) {
     };
 
     var $bots_table = $("#admin_bots_table");
-    list_render.create($bots_table, bots, {
+    var bot_list = list_render.create($bots_table, bots, {
         name: "admin_bot_list",
         modifier: function (item) {
-            return render_admin_user_list({ user: item, can_modify: page_params.is_admin });
+            return render_admin_user_list({
+                can_modify: page_params.is_admin,
+                // It's always safe to show the fake email addresses for bot users
+                show_email: true,
+                user: item,
+            });
         },
         filter: {
             element: $bots_table.closest(".settings-section").find(".search"),
@@ -148,37 +177,41 @@ function populate_users(realm_people_data) {
             },
             onupdate: reset_scrollbar($bots_table),
         },
+        parent_container: $("#admin-bot-list").expectOne(),
     }).init();
 
+    bot_list.sort("alphabetic", "full_name");
+
+    bot_list.add_sort_function("bot_owner", function (a, b) {
+        if (!a.bot_owner) { return 1; }
+        if (!b.bot_owner) { return -1; }
+
+        return compare_a_b(a.bot_owner, b.bot_owner);
+    });
+
+    function get_rendered_last_activity(item) {
+        var today = new XDate();
+        if (item.last_active === LAST_ACTIVE_UNKNOWN) {
+            return $("<span></span>").text(i18n.t("Unknown"));
+        }
+        if (item.last_active === LAST_ACTIVE_NEVER) {
+            return $("<span></span>").text(i18n.t("Never"));
+        }
+        return timerender.render_date(
+            new XDate(item.last_active * 1000), undefined, today);
+    }
+
     var $users_table = $("#admin_users_table");
-    list_render.create($users_table, active_users, {
+    var users_list = list_render.create($users_table, active_users, {
         name: "users_table_list",
         modifier: function (item) {
-            var activity_rendered;
-            var today = new XDate();
-            if (people.is_current_user(item.email)) {
-                activity_rendered = timerender.render_date(today, undefined, today);
-            } else if (presence.presence_info[item.user_id]) {
-                // XDate takes number of milliseconds since UTC epoch.
-                var last_active = presence.presence_info[item.user_id].last_active * 1000;
-
-                if (!isNaN(last_active)) {
-                    var last_active_date = new XDate(last_active);
-                    activity_rendered = timerender.render_date(last_active_date, undefined, today);
-                } else {
-                    activity_rendered = $("<span></span>").text(i18n.t("Never"));
-                }
-            } else {
-                activity_rendered = $("<span></span>").text(i18n.t("Unknown"));
-            }
-
             var $row = $(render_admin_user_list({
-                user: item,
                 can_modify: page_params.is_admin,
                 is_current_user: people.is_my_user_id(item.user_id),
+                show_email: settings_org.show_email(),
+                user: item,
             }));
-            $row.find(".last_active").append(activity_rendered);
-
+            $row.find(".last_active").append(get_rendered_last_activity(item));
             return $row;
         },
         filter: {
@@ -196,13 +229,34 @@ function populate_users(realm_people_data) {
             },
             onupdate: reset_scrollbar($users_table),
         },
+        parent_container: $("#admin-user-list").expectOne(),
     }).init();
 
+    users_list.sort("alphabetic", "full_name");
+
+    function sort_role(a, b) {
+        function role(user) {
+            if (user.is_admin) { return 0; }
+            if (user.is_guest) { return 2; }
+            return 1; // member
+        }
+        return compare_a_b(role(a), role(b));
+    }
+    users_list.add_sort_function("role", sort_role);
+
+    users_list.add_sort_function("last_active", function (a, b) {
+        return compare_a_b(b.last_active, a.last_active);
+    });
+
     var $deactivated_users_table = $("#admin_deactivated_users_table");
-    list_render.create($deactivated_users_table, deactivated_users, {
+    var deactivated_users_list = list_render.create($deactivated_users_table, deactivated_users, {
         name: "deactivated_users_table_list",
         modifier: function (item) {
-            return render_admin_user_list({ user: item, can_modify: page_params.is_admin });
+            return render_admin_user_list({
+                user: item,
+                show_email: settings_org.show_email(),
+                can_modify: page_params.is_admin,
+            });
         },
         filter: {
             element: $deactivated_users_table.closest(".settings-section").find(".search"),
@@ -219,7 +273,11 @@ function populate_users(realm_people_data) {
             },
             onupdate: reset_scrollbar($deactivated_users_table),
         },
+        parent_container: $("#admin-deactivated-users-list").expectOne(),
     }).init();
+
+    deactivated_users_list.sort("alphabetic", "full_name");
+    deactivated_users_list.add_sort_function("role", sort_role);
 
     loading.destroy_indicator($('#admin_page_users_loading_indicator'));
     loading.destroy_indicator($('#admin_page_bots_loading_indicator'));

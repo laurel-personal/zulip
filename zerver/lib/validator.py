@@ -228,14 +228,14 @@ def check_url(var_name: str, val: object) -> Optional[str]:
     except ValidationError:
         return _('%s is not a URL') % (var_name,)
 
-def check_url_pattern(var_name: str, val: object) -> Optional[str]:
+def check_external_account_url_pattern(var_name: str, val: object) -> Optional[str]:
     error = check_string(var_name, val)
     if error:
         return error
     val = cast(str, val)
 
     if val.count('%(username)s') != 1:
-        return _('username should appear exactly once in pattern.')
+        return _('Malformed URL pattern.')
     url_val = val.replace('%(username)s', 'username')
 
     error = check_url(var_name, url_val)
@@ -337,3 +337,9 @@ def check_string_or_int_list(var_name: str, val: object) -> Optional[str]:
         return _('%s is not a string or an integer list') % (var_name,)
 
     return check_list(check_int)(var_name, val)
+
+def check_string_or_int(var_name: str, val: object) -> Optional[str]:
+    if isinstance(val, str) or isinstance(val, int):
+        return None
+
+    return _('%s is not a string or integer') % (var_name,)

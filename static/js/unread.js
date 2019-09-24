@@ -546,6 +546,32 @@ exports.get_counts = function () {
     return res;
 };
 
+// Saves us from calling to get_counts() when we can avoid it.
+exports.calculate_notifiable_count = function (res) {
+    var new_message_count = 0;
+
+    var only_show_notifiable = page_params.desktop_icon_count_display ===
+        settings_notifications.desktop_icon_count_display_values.notifiable.code;
+    var no_notifications = page_params.desktop_icon_count_display ===
+        settings_notifications.desktop_icon_count_display_values.none.code;
+    if (only_show_notifiable) {
+        // DESKTOP_ICON_COUNT_DISPLAY_NOTIFIABLE
+        new_message_count = res.mentioned_message_count + res.private_message_count;
+    } else if (no_notifications) {
+        // DESKTOP_ICON_COUNT_DISPLAY_NONE
+        new_message_count = 0;
+    } else {
+        // DESKTOP_ICON_COUNT_DISPLAY_MESSAGES
+        new_message_count = res.home_unread_messages;
+    }
+    return new_message_count;
+};
+
+exports.get_notifiable_count = function () {
+    var res = exports.get_counts();
+    return exports.calculate_notifiable_count(res);
+};
+
 exports.num_unread_for_stream = function (stream_id) {
     return exports.unread_topic_counter.get_stream_count(stream_id);
 };
@@ -602,7 +628,7 @@ exports.get_msg_ids_for_starred = function () {
     return [];
 };
 
-exports.load_server_counts = function () {
+exports.initialize = function () {
     var unread_msgs = page_params.unread_msgs;
 
     exports.unread_pm_counter.set_huddles(unread_msgs.huddles);
@@ -620,12 +646,6 @@ exports.load_server_counts = function () {
         unread_messages.add_many(obj.unread_message_ids);
     });
     unread_messages.add_many(unread_msgs.mentions);
-};
-
-exports.initialize = function () {
-    if (feature_flags.load_server_counts) {
-        exports.load_server_counts();
-    }
 };
 
 return exports;

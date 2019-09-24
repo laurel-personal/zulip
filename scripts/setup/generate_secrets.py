@@ -3,9 +3,8 @@
 
 import sys
 import os
-if False:
-    # See https://zulip.readthedocs.io/en/latest/testing/mypy.html#mypy-in-production-scripts
-    from typing import Dict, List
+
+from typing import Dict, List
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(BASE_DIR)
@@ -108,11 +107,10 @@ def generate_secrets(development=False):
         print("generate_secrets: No new secrets to generate.")
         return
 
-    out = open(OUTPUT_SETTINGS_FILENAME, 'a')
-    # Write a newline at the start, in case there was no newline at
-    # the end of the file due to human editing.
-    out.write("\n" + "".join(lines))
-    out.close()
+    with open(OUTPUT_SETTINGS_FILENAME, 'a') as f:
+        # Write a newline at the start, in case there was no newline at
+        # the end of the file due to human editing.
+        f.write("\n" + "".join(lines))
 
     print("Generated new secrets in %s." % (OUTPUT_SETTINGS_FILENAME,))
 

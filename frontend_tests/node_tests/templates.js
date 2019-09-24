@@ -442,7 +442,7 @@ run_test('settings/admin_auth_methods_list', () => {
 
     var method = $(html).find('tr.method_row').first().find('span.method');
     assert.equal(method.text(), 'Email');
-    assert.equal(method.is("checked"), false);
+    assert.equal(method.is(":checked"), false);
 });
 
 run_test('bookend', () => {
@@ -639,13 +639,6 @@ run_test('draft_table_body', () => {
     assert.equal(row_2.find(".stream_label").text().trim(), "translated: You and Jordan, Michael");
     assert(row_2.find(".message_row").hasClass("private-message"));
     assert.equal(row_2.find(".message_content").text().trim(), "Private draft");
-});
-
-
-run_test('email_address_hint', () => {
-    var html = render('email_address_hint');
-    var li = $(html).find("li").first();
-    assert.equal(li.text(), 'translated: The email will be forwarded to this stream');
 });
 
 run_test('emoji_popover', () => {
@@ -870,7 +863,7 @@ run_test('message_group', () => {
         {
             msg: {
                 content: 'This is message two.',
-                match_content: 'This is message <span class="highlight">two</span>.',
+                match_content: 'This is message <span class="highlight">two</span>.\n<pre>code\nblock</pre>',
                 is_stream: true,
                 unread: true,
                 id: 2,
@@ -897,7 +890,7 @@ run_test('message_group', () => {
     assert.equal(first_message_text, "This is message one.");
 
     var last_message_html = $(html).next('.recipient_row').find('div.messagebox').last().find('.message_content').html().trim();
-    assert.equal(last_message_html, 'This is message <span class="highlight">two</span>.');
+    assert.equal(last_message_html, 'This is message <span class="highlight">two</span>.\n<pre>code\nblock</pre>');
 
     var highlighted_topic_word = $(html).find('a.narrows_by_topic .highlight').text();
     assert.equal(highlighted_topic_word, 'two');

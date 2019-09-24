@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from email.utils import parseaddr
 from typing import (cast, Any, Dict, Iterable, Iterator, List, Optional,
                     Tuple, Union, Set)
 
@@ -48,6 +49,7 @@ from zerver.models import (
     get_display_recipient,
     get_user,
     get_realm,
+    get_system_bot,
     Client,
     Message,
     Realm,
@@ -223,7 +225,8 @@ class ZulipTestCase(TestCase):
         polonius='polonius@zulip.com',
         webhook_bot='webhook-bot@zulip.com',
         welcome_bot='welcome-bot@zulip.com',
-        outgoing_webhook_bot='outgoing-webhook@zulip.com'
+        outgoing_webhook_bot='outgoing-webhook@zulip.com',
+        default_bot='default-bot@zulip.com'
     )
 
     mit_user_map = dict(
@@ -275,7 +278,7 @@ class ZulipTestCase(TestCase):
         return self.mit_user_map[name]
 
     def notification_bot(self) -> UserProfile:
-        return get_user('notification-bot@zulip.com', get_realm('zulip'))
+        return get_system_bot(settings.NOTIFICATION_BOT)
 
     def create_test_bot(self, short_name: str, user_profile: UserProfile,
                         assert_json_error_msg: str=None, **extras: Any) -> Optional[UserProfile]:
@@ -358,6 +361,7 @@ class ZulipTestCase(TestCase):
         """
         if full_name is None:
             full_name = email.replace("@", "_")
+
         payload = {
             'full_name': full_name,
             'password': password,
@@ -381,7 +385,7 @@ class ZulipTestCase(TestCase):
             # This is a bit of a crude heuristic, but good enough for most tests.
             url_pattern = settings.EXTERNAL_HOST + r"(\S+)>"
         for message in reversed(outbox):
-            if email_address in message.to:
+            if email_address in parseaddr(message.to)[1]:
                 return re.search(url_pattern, message.body).groups()[0]
         else:
             raise AssertionError("Couldn't find a confirmation email.")
@@ -403,24 +407,24 @@ class ZulipTestCase(TestCase):
         credentials = "%s:%s" % (identifier, api_key)
         return 'Basic ' + base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
 
-    def api_get(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(email)
+    def api_get(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_get(*args, **kwargs)
 
     def api_post(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('realm', 'zulip'))
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_post(*args, **kwargs)
 
-    def api_patch(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(email)
+    def api_patch(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_patch(*args, **kwargs)
 
-    def api_put(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(email)
+    def api_put(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_put(*args, **kwargs)
 
-    def api_delete(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(email)
+    def api_delete(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_delete(*args, **kwargs)
 
     def get_streams(self, email: str, realm: Realm) -> List[str]:
@@ -633,7 +637,6 @@ class ZulipTestCase(TestCase):
         post_data = {'subscriptions': ujson.dumps([{"name": stream} for stream in streams]),
                      'invite_only': ujson.dumps(invite_only)}
         post_data.update(extra_post_data)
-        kwargs['realm'] = kwargs.get('subdomain', 'zulip')
         result = self.api_post(email, "/api/v1/users/me/subscriptions", post_data, **kwargs)
         return result
 

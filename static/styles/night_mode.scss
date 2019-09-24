@@ -92,8 +92,26 @@ on a dark background, and don't change the dark labels dark either. */
         opacity: 0.5;
     }
 
-    .new-style .button:not(.save-status),
-    .new-style .button[disabled=disabled]:hover,
+    .new-style .button {
+        background-color: hsla(0, 0%, 0%, 0.2);
+
+        &:not(.sea-green):not(.btn-danger):not(.btn-warning):not(.btn-link) {
+            border-color: hsla(0, 0%, 0%, 0.6);
+            color: inherit;
+        }
+
+        &.btn-link {
+            border-color: hsla(0, 0%, 0%, 0.6);
+            color: hsl(200, 79%, 66%);
+        }
+
+        &:hover,
+        &:focus,
+        &:active {
+            background-color: hsla(0, 0%, 0%, 0.15);
+        }
+    }
+
     input[type="text"],
     input[type="email"],
     input[type="password"],
@@ -171,7 +189,6 @@ on a dark background, and don't change the dark labels dark either. */
         box-shadow: 0 0 1px hsl(0, 0%, 98%);
     }
 
-    .new-style .button:not(.save-status):focus,
     input[type="text"]:focus,
     input[type="email"]:focus,
     input[type="number"]:focus,
@@ -206,17 +223,19 @@ on a dark background, and don't change the dark labels dark either. */
     }
 
     .overlay,
-    #stream_creation_form #stream_creating_indicator:not(:empty),
+    #subscription_overlay #stream-creation #stream_creation_form #stream_creating_indicator:not(:empty),
     .emoji-info-popover .emoji-popover .emoji-popover-emoji:not(.reacted):focus {
         background-color: hsla(212, 28%, 8%, 0.75);
     }
 
     .overlay .flex.overlay-content > div,
+    .dropdown-menu.typeahead,
     #settings_page,
     .informational-overlays .overlay-content {
         box-shadow: 0px 0px 30px hsl(212, 32%, 7%);
     }
 
+    .dropdown-menu ul,
     .dropdown .dropdown-menu,
     .popover,
     .popover-title,
@@ -332,9 +351,9 @@ on a dark background, and don't change the dark labels dark either. */
     thead,
     #searchbox,
     #searchbox_legacy,
-    .drafts-header,
+    .drafts-container .drafts-header,
     .nav > li > a:hover,
-    .subscriptions-header,
+    .subscriptions-container .subscriptions-header,
     .grey-box,
     .white-box,
     .stream-email,
@@ -355,7 +374,6 @@ on a dark background, and don't change the dark labels dark either. */
     }
 
     .modal-footer {
-        -webkit-box-shadow: inset 0 1px 0 hsla(0, 0%, 0%, 0.2);
         box-shadow: inset 0 1px 0 hsla(0, 0%, 0%, 0.2);
     }
 
@@ -399,17 +417,13 @@ on a dark background, and don't change the dark labels dark either. */
         background-color: hsla(8, 78%, 43%, 0.15);
     }
 
-    .user-mention,
-    .user-group-mention {
-        background: -webkit-gradient(linear, left top, left bottom, color-stop(0%, hsla(0, 0%, 0%, 0.1)), color-stop(100%, hsla(0, 0%, 0%, 0.0)));
-        background: -webkit-linear-gradient(top, hsla(0, 0%, 0%, 0.2) 0%, hsla(0, 0%, 0%, 0.1) 100%);
-        background: -o-linear-gradient(top, hsla(0, 0%, 0%, 0.2) 0%, hsla(0, 0%, 0%, 0.1) 100%);
-        background: -ms-linear-gradient(top, hsla(0, 0%, 0%, 0.2) 0%, hsla(0, 0%, 0%, 0.1) 100%);
+    .rendered_markdown .user-mention,
+    .rendered_markdown .user-group-mention {
         background: linear-gradient(to bottom, hsla(0, 0%, 0%, 0.2) 0%, hsla(0, 0%, 0%, 0.1) 100%);
         box-shadow: 0px 0px 0px 1px hsla(0, 0%, 0%, 0.4);
     }
 
-    .user-mention-me :not(.silent) {
+    .rendered_markdown .user-mention-me :not(.silent) {
         background-color: hsla(355, 37%, 31%, 1);
         box-shadow: 0px 0px 0px 1px hsla(330, 40%, 20%, 1);
     }
@@ -529,18 +543,21 @@ on a dark background, and don't change the dark labels dark either. */
         color: inherit;
     }
 
+    /* Search highlight used in both topics and rendered_markdown */
     .highlight {
         background-color: hsla(51, 100%, 64%, 0.42);
     }
 
-    .highlight_text_inserted {
-        color: hsl(122, 100%, 81%);
-        background-color: hsla(120, 64%, 95%, 0.3);
-    }
+    .rendered_markdown {
+        .highlight_text_inserted {
+            color: hsl(122, 100%, 81%);
+            background-color: hsla(120, 64%, 95%, 0.3);
+        }
 
-    .highlight_text_deleted {
-        text-decoration: line-through;
-        background-color: hsla(7, 54%, 62%, 0.38);
+        .highlight_text_deleted {
+            text-decoration: line-through;
+            background-color: hsla(7, 54%, 62%, 0.38);
+        }
     }
 
     .sub-unsub-message span::before,
@@ -575,7 +592,6 @@ on a dark background, and don't change the dark labels dark either. */
     }
 
     .searching-for-more-topics img {
-        -webkit-filter: invert(100%);
         filter: invert(100%);
     }
 
@@ -590,6 +606,27 @@ on a dark background, and don't change the dark labels dark either. */
 
     #loading_more_messages_indicator path {
         fill: hsl(0, 0%, 100%);
+    }
+
+    .small_square_button {
+        &.small_square_check {
+            background-color: hsl(166, 35%, 52%);
+            color: hsl(0, 0%, 90%);
+
+            &:hover {
+                background-color: hsl(156, 30%, 45%);
+                color: hsl(0, 0%, 95%);
+            }
+        }
+
+        &.small_square_x {
+            background-color: hsl(0, 0%, 95%);
+            color: hsl(0, 0%, 42%);
+
+            &:hover {
+                color: hsl(0, 0%, 18%);
+            }
+        }
     }
 }
 

@@ -27,19 +27,58 @@ exports.populate_filters = function (filters_data) {
     }
 
     var filters_table = $("#admin_filters_table").expectOne();
-    filters_table.find("tr.filter_row").remove();
-    _.each(filters_data, function (filter) {
-        filters_table.append(
-            render_admin_filter_list({
+    var filters_list = list_render.create(filters_table, filters_data, {
+        name: "linkifiers_list",
+        modifier: function (filter) {
+            return render_admin_filter_list({
                 filter: {
                     pattern: filter[0],
                     url_format_string: filter[1],
                     id: filter[2],
                 },
                 can_modify: page_params.is_admin,
-            })
-        );
+            });
+        },
+        filter: {
+            element: filters_table.closest(".settings-section").find(".search"),
+            callback: function (item, value) {
+                return (
+                    item[0].toLowerCase().indexOf(value) >= 0 ||
+                    item[1].toLowerCase().indexOf(value) >= 0
+                );
+            },
+            onupdate: function () {
+                ui.reset_scrollbar(filters_table);
+            },
+        },
+        parent_container: $("#filter-settings").expectOne(),
+    }).init();
+
+    function compare_by_index(a, b, i) {
+        if (a[i] > b[i]) {
+            return 1;
+        } else if (a[i] === b[i]) {
+            return 0;
+        }
+        return -1;
+    }
+
+    filters_list.add_sort_function("pattern", function (a, b) {
+        return compare_by_index(a, b, 0);
     });
+
+    filters_list.add_sort_function("url", function (a, b) {
+        return compare_by_index(a, b, 1);
+    });
+
+    var active_col = $('.admin_filters_table th.active').expectOne();
+    filters_list.sort(
+        active_col.data('sort'),
+        undefined,
+        undefined,
+        undefined,
+        active_col.hasClass('descend'));
+
     loading.destroy_indicator($('#admin_page_filters_loading_indicator'));
 };
 

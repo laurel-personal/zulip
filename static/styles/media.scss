@@ -71,8 +71,6 @@
 
     .nav .dropdown-menu {
         min-width: 180px;
-        -webkit-box-shadow: 0px 0px 5px hsla(0, 0%, 0%, 0.2);
-        -moz-box-shadow: 0px 0px 5px hsla(0, 0%, 0%, 0.2);
         box-shadow: 0px 0px 5px hsla(0, 0%, 0%, 0.2);
     }
 
@@ -278,10 +276,6 @@
         width: 56px;
         right: -10px;
         top: 0px;
-    }
-
-    .message_hovered .message_controls {
-        z-index: 10;
     }
 
     .include-sender .message_controls {

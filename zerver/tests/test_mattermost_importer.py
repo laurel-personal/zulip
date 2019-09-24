@@ -80,6 +80,11 @@ class MatterMostImporter(ZulipTestCase):
         self.assertEqual(user["short_name"], "harry")
         self.assertEqual(user["timezone"], "UTC")
 
+        # A user with a `null` team value shouldn't be an admin.
+        harry_dict["teams"] = None
+        user = process_user(harry_dict, realm_id, team_name, user_id_mapper)
+        self.assertEqual(user["is_realm_admin"], False)
+
         team_name = "slytherin"
         snape_dict = self.username_to_user["snape"]
         snape_dict["is_mirror_dummy"] = True
@@ -119,7 +124,7 @@ class MatterMostImporter(ZulipTestCase):
 
         team_name = "gryffindor"
         # Snape is a mirror dummy user in Harry's team.
-        label_mirror_dummy_users(team_name, self.mattermost_data, self.username_to_user)
+        label_mirror_dummy_users(2, team_name, self.mattermost_data, self.username_to_user)
         user_handler = UserHandler()
         convert_user_data(user_handler, user_id_mapper, self.username_to_user, realm_id, team_name)
         self.assertEqual(len(user_handler.get_all_users()), 3)
@@ -180,9 +185,29 @@ class MatterMostImporter(ZulipTestCase):
         self.assertTrue(stream_id_mapper.has("dumbledores-army"))
 
         # TODO: Add ginny
-        self.assertEqual(subscriber_handler.get_users(stream_id_mapper.get("gryffindor-common-room")), {1, 2})
-        self.assertEqual(subscriber_handler.get_users(stream_id_mapper.get("gryffindor-quidditch-team")), {1, 2})
-        self.assertEqual(subscriber_handler.get_users(stream_id_mapper.get("dumbledores-army")), {1, 2})
+        ron_id = user_id_mapper.get("ron")
+        harry_id = user_id_mapper.get("harry")
+        self.assertEqual({ron_id, harry_id}, {1, 2})
+        self.assertEqual(subscriber_handler.get_users(stream_id=stream_id_mapper.get("gryffindor-common-room")), {ron_id, harry_id})
+        self.assertEqual(subscriber_handler.get_users(stream_id=stream_id_mapper.get("gryffindor-quidditch-team")), {ron_id, harry_id})
+        self.assertEqual(subscriber_handler.get_users(stream_id=stream_id_mapper.get("dumbledores-army")), {ron_id, harry_id})
+
+        # Converting channel data when a user's `teams` value is `null`.
+        self.username_to_user["ron"].update({"teams": None})
+        zerver_stream = convert_channel_data(
+            channel_data=self.mattermost_data["channel"],
+            user_data_map=self.username_to_user,
+            subscriber_handler=subscriber_handler,
+            stream_id_mapper=stream_id_mapper,
+            user_id_mapper=user_id_mapper,
+            realm_id=3,
+            team_name=team_name,
+        )
+        harry_id = user_id_mapper.get("harry")
+        self.assertIn(harry_id, {1, 2})
+        self.assertEqual(subscriber_handler.get_users(stream_id=stream_id_mapper.get("gryffindor-common-room")), {harry_id})
+        self.assertEqual(subscriber_handler.get_users(stream_id=stream_id_mapper.get("gryffindor-quidditch-team")), {harry_id})
+        self.assertEqual(subscriber_handler.get_users(stream_id=stream_id_mapper.get("dumbledores-army")), {harry_id})
 
         team_name = "slytherin"
         zerver_stream = convert_channel_data(
@@ -195,8 +220,12 @@ class MatterMostImporter(ZulipTestCase):
             team_name=team_name,
         )
 
-        self.assertEqual(subscriber_handler.get_users(stream_id_mapper.get("slytherin-common-room")), {3, 4, 5})
-        self.assertEqual(subscriber_handler.get_users(stream_id_mapper.get("slytherin-quidditch-team")), {3, 4})
+        malfoy_id = user_id_mapper.get("malfoy")
+        pansy_id = user_id_mapper.get("pansy")
+        snape_id = user_id_mapper.get("snape")
+        self.assertEqual({malfoy_id, pansy_id, snape_id}, {3, 4, 5})
+        self.assertEqual(subscriber_handler.get_users(stream_id=stream_id_mapper.get("slytherin-common-room")), {malfoy_id, pansy_id, snape_id})
+        self.assertEqual(subscriber_handler.get_users(stream_id=stream_id_mapper.get("slytherin-quidditch-team")), {malfoy_id, pansy_id})
 
     def test_write_emoticon_data(self) -> None:
         output_dir = self.make_import_output_dir("mattermost")
@@ -313,8 +342,12 @@ class MatterMostImporter(ZulipTestCase):
         self.assertFalse(check_user_in_team(snape, "gryffindor"))
         self.assertTrue(check_user_in_team(snape, "slytherin"))
 
+        snape.update({"teams": None})
+        self.assertFalse(check_user_in_team(snape, "slytherin"))
+
     def test_label_mirror_dummy_users(self) -> None:
         label_mirror_dummy_users(
+            num_teams=2,
             team_name="gryffindor",
             mattermost_data=self.mattermost_data,
             username_to_user=self.username_to_user,

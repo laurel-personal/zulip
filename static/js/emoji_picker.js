@@ -598,6 +598,7 @@ exports.render_emoji_popover = function (elt, id) {
         template: template,
         title: "",
         content: generate_emoji_picker_content(id),
+        html: true,
         trigger: "manual",
     });
     elt.popover("show");
@@ -693,8 +694,28 @@ exports.register_click_handlers = function () {
         emoji_picker.toggle_emoji_popover(this, message_id);
     });
 
+    $("#main_div").on("mouseenter", ".reaction_button", function (e) {
+        e.stopPropagation();
+
+        var elem = $(e.currentTarget);
+        var title = i18n.t("Add emoji reaction");
+        elem.tooltip({
+            title: title + " (:)",
+            trigger: 'hover',
+            placement: 'bottom',
+            animation: false,
+        });
+        elem.tooltip('show');
+        $(".tooltip-arrow").remove();
+    });
+
+    $('#main_div').on('mouseleave', '.reaction_button', function (e) {
+        e.stopPropagation();
+        $(e.currentTarget).tooltip('hide');
+    });
+
     $("body").on("click", ".actions_popover .reaction_button", function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
+        var message_id = $(e.currentTarget).data('message-id');
         e.preventDefault();
         e.stopPropagation();
         // HACK: Because we need the popover to be based off an
@@ -703,7 +724,7 @@ exports.register_click_handlers = function () {
         // element is not present, we use the message's
         // .fa-chevron-down element as the base for the popover.
         var elem = $(".selected_message .actions_hover")[0];
-        emoji_picker.toggle_emoji_popover(elem, msgid);
+        emoji_picker.toggle_emoji_popover(elem, message_id);
     });
 
     $("body").on("click", ".emoji-popover-tab-item", function (e) {

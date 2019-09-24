@@ -48,7 +48,8 @@ class TestZulipBaseCommand(ZulipTestCase):
     def test_get_realm(self) -> None:
         self.assertEqual(self.command.get_realm(dict(realm_id='zulip')), self.zulip_realm)
         self.assertEqual(self.command.get_realm(dict(realm_id=None)), None)
-        self.assertEqual(self.command.get_realm(dict(realm_id='1')), self.zulip_realm)
+        self.assertEqual(self.command.get_realm(dict(realm_id=str(self.zulip_realm.id))),
+                         self.zulip_realm)
         with self.assertRaisesRegex(CommandError, "There is no realm with id"):
             self.command.get_realm(dict(realm_id='17'))
         with self.assertRaisesRegex(CommandError, "There is no realm with id"):
@@ -62,7 +63,7 @@ class TestZulipBaseCommand(ZulipTestCase):
         self.assertEqual(self.command.get_user(email, self.zulip_realm), user_profile)
         self.assertEqual(self.command.get_user(email, None), user_profile)
 
-        error_message = "The realm '<Realm: zephyr 2>' does not contain a user with email"
+        error_message = "The realm '%s' does not contain a user with email" % (mit_realm,)
         with self.assertRaisesRegex(CommandError, error_message):
             self.command.get_user(email, mit_realm)
 
@@ -81,8 +82,8 @@ class TestZulipBaseCommand(ZulipTestCase):
         self.assertEqual(get_user_profile_by_email(email), user_profile)
 
     def get_users_sorted(self, options: Dict[str, Any], realm: Optional[Realm],
-                         is_bot: Optional[bool]=None) -> List[UserProfile]:
-        user_profiles = self.command.get_users(options, realm, is_bot=is_bot)
+                         **kwargs: Any) -> List[UserProfile]:
+        user_profiles = self.command.get_users(options, realm, **kwargs)
         return sorted(user_profiles, key = lambda x: x.email)
 
     def test_get_users(self) -> None:
@@ -97,7 +98,7 @@ class TestZulipBaseCommand(ZulipTestCase):
         expected_user_profiles = [self.example_user("iago"), self.mit_user("sipbtest")]
         user_profiles = self.get_users_sorted(dict(users=user_emails), None)
         self.assertEqual(user_profiles, expected_user_profiles)
-        error_message = "The realm '<Realm: zulip 1>' does not contain a user with email"
+        error_message = "The realm '%s' does not contain a user with email" % (self.zulip_realm,)
         with self.assertRaisesRegex(CommandError, error_message):
             self.command.get_users(dict(users=user_emails), self.zulip_realm)
 
@@ -115,9 +116,30 @@ class TestZulipBaseCommand(ZulipTestCase):
         with self.assertRaisesRegex(CommandError, error_message):
             self.command.get_users(dict(users=user_emails, all_users=True), None)
 
-        expected_user_profiles = sorted(UserProfile.objects.filter(realm=self.zulip_realm),
+        # Test the default mode excluding bots and deactivated users
+        expected_user_profiles = sorted(UserProfile.objects.filter(realm=self.zulip_realm,
+                                                                   is_active=True, is_bot=False),
                                         key = lambda x: x.email)
-        user_profiles = self.get_users_sorted(dict(users=None, all_users=True), self.zulip_realm)
+        user_profiles = self.get_users_sorted(dict(users=None, all_users=True),
+                                              self.zulip_realm,
+                                              is_bot=False)
+        self.assertEqual(user_profiles, expected_user_profiles)
+
+        # Test the default mode excluding bots and deactivated users
+        expected_user_profiles = sorted(UserProfile.objects.filter(realm=self.zulip_realm,
+                                                                   is_active=True),
+                                        key = lambda x: x.email)
+        user_profiles = self.get_users_sorted(dict(users=None, all_users=True),
+                                              self.zulip_realm)
+        self.assertEqual(user_profiles, expected_user_profiles)
+
+        # Test include_deactivated
+        expected_user_profiles = sorted(UserProfile.objects.filter(realm=self.zulip_realm,
+                                                                   is_bot=False),
+                                        key = lambda x: x.email)
+        user_profiles = self.get_users_sorted(dict(users=None, all_users=True),
+                                              self.zulip_realm,
+                                              is_bot=False, include_deactivated=True)
         self.assertEqual(user_profiles, expected_user_profiles)
 
         error_message = "You have to pass either -u/--users or -a/--all-users."
@@ -150,13 +172,11 @@ class TestCommandsCanStart(TestCase):
 
     @slow("Aggregate of runs dozens of individual --help tests")
     def test_management_commands_show_help(self) -> None:
-        with stdout_suppressed() as stdout:
+        with stdout_suppressed():
             for command in self.commands:
-                print('Testing management command: {}'.format(command),
-                      file=stdout)
-
-                with self.assertRaises(SystemExit):
-                    call_command(command, '--help')
+                with self.subTest(management_command=command):
+                    with self.assertRaises(SystemExit):
+                        call_command(command, '--help')
         # zerver/management/commands/runtornado.py sets this to True;
         # we need to reset it here.  See #3685 for details.
         settings.RUNNING_INSIDE_TORNADO = False
@@ -350,7 +370,7 @@ class TestSendToEmailMirror(ZulipTestCase):
         # last message should be equal to the body of the email in 1.txt
         self.assertEqual(message.content, "Email fixture 1.txt body")
 
-        stream_id = get_stream("Denmark2", message.sender.realm).id
+        stream_id = get_stream("Denmark2", get_realm("zulip")).id
         self.assertEqual(message.recipient.type, Recipient.STREAM)
         self.assertEqual(message.recipient.type_id, stream_id)
 

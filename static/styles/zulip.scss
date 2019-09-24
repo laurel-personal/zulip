@@ -1,5 +1,3 @@
-@import './reuseable_components.scss';
-
 body,
 html {
     width: 100%;
@@ -10,7 +8,7 @@ html {
     touch-action: manipulation;
 }
 
-#css-loading {
+#app-loading.loaded {
     display: none !important; /* We are now loaded, by definition. */
 }
 
@@ -42,15 +40,15 @@ a {
 }
 
 .no-select {
-    @include prefixed-user-select(none);
+    user-select: none;
 }
 
 .auto-select {
-    @include prefixed-user-select(auto);
+    user-select: auto;
 }
 
 .text-select {
-    @include prefixed-user-select(text);
+    user-select: text;
 }
 
 p.n-margin {
@@ -174,6 +172,10 @@ p.n-margin {
     animation-name: fadeInEditNotice;
     animation-duration: 1s;
     animation-iteration-count: 1;
+}
+
+.message_edit_notice_hover:hover {
+    opacity: 1.0;
 }
 
 #feedback_container .exit-me {
@@ -446,8 +448,6 @@ strong {
 .sp-input {
     width: calc(100% - 14px);
     box-sizing: initial !important;
-    -webkit-box-sizing: initial !important;
-    -moz-box-sizing: initial !important;
 }
 
 .logout {
@@ -563,7 +563,7 @@ td.pointer {
     position: absolute;
     left: 0px;
     top: 16px;
-    @include prefixed-user-select(none);
+    user-select: none;
 }
 
 .include-sender .message_time {
@@ -657,10 +657,6 @@ td.pointer {
         .rotating {
             display: inline-block;
 
-            -webkit-animation: rotate 1s infinite linear;
-            -moz-animation: rotate 1s infinite linear;
-            -ms-animation: rotate 1s infinite linear;
-            -o-animation: rotate 1s infinite linear;
             animation: rotate 1s infinite linear;
         }
     }
@@ -767,7 +763,7 @@ td.pointer {
     border-width: 11px 0 11px 5px;
     border-color: inherit;
     z-index: 2;
-    -moz-transform: scale(.9999);
+    transform: scale(.9999);
 }
 
 .stream_label::before {
@@ -783,7 +779,7 @@ td.pointer {
     border-width: 14px 0 14px 6px;
     border-color: hsla(0, 0%, 0%, 0.0) hsla(0, 0%, 0%, 0.0) hsla(0, 0%, 0%, 0.0) transparent;
     z-index: 1;
-    -moz-transform: scale(.9999);
+    transform: scale(.9999);
 }
 
 .stream_topic {
@@ -868,46 +864,6 @@ td.pointer {
     display: none;
 }
 
-@-webkit-keyframes rotate {
-    from {
-        -webkit-transform: rotate(0deg);
-    }
-
-    to {
-        -webkit-transform: rotate(359deg);
-    }
-}
-
-@-moz-keyframes rotate {
-    from {
-        -moz-transform: rotate(0deg);
-    }
-
-    to {
-        -moz-transform: rotate(359deg);
-    }
-}
-
-@-ms-keyframes rotate {
-    from {
-        -ms-transform: rotate(0deg);
-    }
-
-    to {
-        -ms-transform: rotate(359deg);
-    }
-}
-
-@-moz-keyframes rotate {
-    from {
-        -o-transform: rotate(0deg);
-    }
-
-    to {
-        -o-transform: rotate(359deg);
-    }
-}
-
 @keyframes rotate {
     from {
         transform: rotate(0deg);
@@ -918,26 +874,6 @@ td.pointer {
     }
 }
 
-@-webkit-keyframes fadeInMessage {
-    0% {
-        opacity: 0;
-    }
-
-    100% {
-        opacity: 1;
-    }
-}
-
-@-moz-keyframes fadeInMessage {
-    0% {
-        opacity: 0;
-    }
-
-    100% {
-        opacity: 1;
-    }
-}
-
 @keyframes fadeInMessage {
     0% {
         opacity: 0;
@@ -945,26 +881,6 @@ td.pointer {
 
     100% {
         opacity: 1;
-    }
-}
-
-@-webkit-keyframes fadeInEditNotice {
-    0% {
-        transform: translateX(-10px);
-    }
-
-    100% {
-        transform: translateX(0px);
-    }
-}
-
-@-moz-keyframes fadeInEditNotice {
-    0% {
-        transform: translateX(-10px);
-    }
-
-    100% {
-        transform: translateX(0px);
     }
 }
 
@@ -1191,12 +1107,7 @@ a.dark_background:hover,
 }
 
 .message_top_line {
-    pointer-events: none;
     position: relative;
-}
-
-.message_top_line * {
-    pointer-events: auto;
 }
 
 .include-sender .message_top_line {
@@ -1260,6 +1171,7 @@ div.focused_table {
     margin-left: 46px;
     display: block;
     position: relative;
+    overflow: hidden;
 }
 
 .rtl {
@@ -1371,297 +1283,6 @@ div.focused_table {
 .message_length_controller:hover {
     text-decoration: underline;
 }
-
-/* Inline and block code */
-
-code {
-    /* 12/14 em, so bootstrap's default 12 px,
-       when body is the default 14 px */
-    font-size: 0.857em;
-    unicode-bidi: embed;
-    direction: ltr;
-}
-
-.rendered_markdown code {
-    white-space: pre-wrap;
-    padding: 0px 4px;
-    background-color: hsl(0, 0%, 100%);
-}
-
-.codehilite {
-    display: block !important;
-    border: none !important;
-    background: none !important;
-}
-
-pre {
-    direction: ltr;
-    /* code block text is a bit smaller than normal text */
-    font-size: 0.8em;
-    line-height: 1.4;
-    white-space: pre;
-    overflow-x: auto;
-    word-wrap: normal;
-    /* Bootstrap's default here is top: 0px, bottom: 10px */
-    margin-top: 5px;
-    margin-bottom: 5px;
-    /* Bootstrap's default here is 9.5 on all sides */
-    padding-top: 5px;
-    padding-bottom: 3px;
-    padding-left: 7px;
-    padding-right: 7px;
-}
-
-/* Ensure the horizontal scrollbar is visible on Mac */
-pre::-webkit-scrollbar {
-    height: 8px;
-
-    background-color: hsla(0, 0%, 0%, 0.05);
-}
-
-pre::-webkit-scrollbar-thumb {
-    background-color: hsla(0, 0%, 0%, 0.3);
-    border-radius: 20px;
-
-    transition: all 0.2s ease;
-}
-
-pre::-webkit-scrollbar-thumb:hover {
-    background-color: hsla(0, 0%, 0%, 0.6);
-}
-
-pre code {
-    overflow-x: scroll;
-    white-space: pre;
-}
-
-/* Style inline code inside a link
-   to look more like a normal link */
-a code {
-    color: hsl(200, 100%, 40%);
-    border-color: hsl(200, 100%, 40%);
-}
-
-a:hover code {
-    color: hsl(200, 100%, 25%);
-    border-color: hsl(200, 100%, 25%);
-}
-
-.rendered_markdown {
-    /* The default top/bottom margins for paragraphs are small, to make sure
-       they look nice next to blockquotes, lists, etc. */
-    p {
-        margin: 3px 0px 3px 0px;
-    }
-
-    /* The spacing between two paragraphs is significantly larger.  We
-       arrange things so that this spacing matches the spacing between
-       paragraphs in two consecutive 1-line messages. */
-    p + p {
-        margin-top: 10px;
-    }
-
-    /* Ensure bulleted lists are nicely centered in 1-line messages */
-    ul {
-        margin: 2px 0 5px 20px;
-    }
-
-    /* Swap the left and right margins of bullets for Right-To-Left languages */
-    &.rtl ul {
-        margin-right: 20px;
-        margin-left: 0;
-    }
-
-    /* Ensure ordered lists are nicely centered in 1-line messages */
-    ol {
-        margin: 2px 0 5px 6px;
-    }
-
-    /* Swap the left and right margins of ordered list for Right-To-Left languages */
-    &.rtl ol {
-        margin-right: 8px;
-        margin-left: 0;
-    }
-
-    /* Reduce top-margin when a paragraph is followed by an ordered or bulleted list */
-    p + ul,
-    p + ol {
-        margin-top: -3px;
-    }
-
-    /* Formatting for blockquotes */
-    blockquote {
-        padding-left: 5px;
-        margin-left: 10px;
-        margin-top: 5px;
-        margin-bottom: 6px;
-        border-left-color: hsl(0, 0%, 87%);
-
-        p {
-            line-height: inherit;
-            font-size: inherit;
-        }
-    }
-
-    &.rtl blockquote {
-        padding-left: unset;
-        padding-right: 5px;
-        margin-left: unset;
-        margin-right: 10px;
-        border-left: unset;
-        border-right: 5px solid hsl(0, 0%, 87%);
-    }
-
-    /* Formatting for markdown tables */
-    table {
-        padding-right: 10px;
-        margin: 5px 5px 5px 5px;
-        width: 99%;
-    }
-
-    thead {
-        background-color: hsl(0, 0%, 93%);
-    }
-
-    tr {
-        display: table-row;
-        vertical-align: inherit;
-    }
-
-    tr th {
-        border: 1px solid hsl(0, 0%, 80%);
-        padding: 4px;
-        text-align: left;
-    }
-
-    tr td {
-        border: 1px solid hsl(0, 0%, 80%);
-        padding: 4px;
-    }
-
-    /* CSS for message content widgets */
-    table.tictactoe {
-        width: 80px;
-        margin-left: 0px;
-    }
-
-    td.tictactoe {
-        width: 15px;
-        border: none;
-        padding: 2px;
-    }
-
-    button.tictactoe-square {
-        background-color: hsl(156, 30%, 62%);
-        width: 40px;
-        height: 40px;
-        border: none;
-        border-radius: 3px;
-        font-size: 25px;
-        color: hsl(0, 0%, 100%);
-    }
-
-    button.tictactoe-square:hover {
-        background-color: hsl(155, 5%, 53%);
-    }
-
-    button.tictactoe-square:disabled {
-        background-color: hsl(156, 33%, 81%);
-    }
-
-    /* embedded link previews */
-    .message_embed {
-        display: block;
-        position: relative;
-        margin: 5px 0px;
-        border: none;
-        border-left: 3px solid hsl(0, 0%, 93%);
-        height: 80px;
-        padding: 5px;
-        z-index: 1;
-        text-shadow: hsla(0, 0%, 0%, 0.01) 0 0 1px;
-
-        .message_embed_title {
-            padding-top: 0px;
-            /* to remove the spacing that the font has from the top of the container. */
-            margin-top: -5px;
-
-            font-size: 1.2em;
-            line-height: normal;
-        }
-
-        .message_embed_description {
-            position: relative;
-            max-width: 500px;
-            margin-top: 3px;
-
-            /* to put it below the container gradient. */
-            z-index: -1;
-        }
-
-        .message_embed_image {
-            display: inline-block;
-            width: 70px;
-            height: 70px;
-            background-size: cover;
-            background-position: center;
-        }
-
-        .data-container {
-            position: relative;
-            padding: 0px 5px;
-            display: inline-block;
-            vertical-align: top;
-            max-width: calc(100% - 115px);
-            max-height: 80px;
-            overflow: hidden;
-        }
-
-        .data-container div {
-            display: block;
-            border: none;
-        }
-
-        .data-container::after {
-            content: " ";
-            position: absolute;
-            width: 100%;
-            height: 10%;
-            bottom: 0;
-
-            background: linear-gradient(0deg, hsl(0, 0%, 100%), transparent 100%);
-        }
-    }
-
-    &.rtl .message_embed {
-        border-left: unset;
-        border-right: 3px solid hsl(0, 0%, 93%);
-    }
-
-    .message_embed > * {
-        display: inherit;
-        padding: 5px;
-        border: none;
-    }
-}
-
-@media (max-width: 600px) {
-    .rendered_markdown .message_embed {
-        height: auto;
-
-        .message_embed_image {
-            width: 100%;
-            height: 100px;
-        }
-
-        .data-container {
-            display: block;
-            max-width: 100%;
-            margin-top: 10px;
-        }
-    }
-}
-
 
 /* CSS for the message box */
 .messagebox {
@@ -1820,7 +1441,7 @@ a:hover code {
                 position: absolute;
                 pointer-events: none;
                 z-index: 1;
-                -moz-transform: scale(.9999);
+                transform: scale(.9999);
             }
         }
 
@@ -1897,8 +1518,6 @@ a:hover code {
     right: 0px;
     top: 30px;
     min-width: 180px;
-    -webkit-box-shadow: 0px 0px 5px hsla(0, 0%, 0%, 0.2);
-    -moz-box-shadow: 0px 0px 5px hsla(0, 0%, 0%, 0.2);
     box-shadow: 0px 0px 5px hsla(0, 0%, 0%, 0.2);
 }
 
@@ -1964,8 +1583,6 @@ a:hover code {
         padding-left: 0px !important;
         background-color: inherit;
         box-shadow: inherit;
-        -webkit-box-shadow: inherit;
-        -moz-box-shadow: inherit;
         display: block;
         position: absolute;
         right: 0px;
@@ -2069,8 +1686,6 @@ nav a .no-style {
         color: hsl(0, 0%, 80%);
         font-size: 18px;
         box-shadow: none;
-        -webkit-box-shadow: none;
-        -moz-box-shadow: none;
         text-shadow: none;
         z-index: 5;
         float: right;
@@ -2187,8 +1802,6 @@ nav a .no-style {
         color: hsl(0, 0%, 80%);
         font-size: 18px;
         box-shadow: none;
-        -webkit-box-shadow: none;
-        -moz-box-shadow: none;
         text-shadow: none;
         z-index: 5;
     }
@@ -2328,129 +1941,6 @@ div.floating_recipient {
     display: inline !important;
 }
 
-.twitter-image,
-.message_inline_image {
-    position: relative;
-    margin-bottom: 5px;
-    margin-left: 5px;
-    height: 100px;
-    display: block !important;
-    border: none !important;
-}
-
-.rtl .twitter-image,
-.rtl .message_inline_image {
-    margin-left: unset;
-    margin-right: 5px;
-}
-
-.highlight {
-    background-color: hsl(51, 94%, 74%);
-}
-
-.highlight_text_inserted {
-    color: hsl(122, 72%, 30%);
-    background-color: hsl(120, 64%, 95%);
-}
-
-.highlight_text_deleted {
-    color: hsl(0, 0%, 73%);
-    text-decoration: line-through;
-    background-color: hsl(7, 90%, 92%);
-    word-break: break-all;
-}
-
-#message-edit-history .message_inline_image {
-    height: auto;
-    overflow-y: auto;
-    overflow-x: hidden;
-    text-overflow: ellipsis;
-    margin: 0px;
-}
-
-.message_inline_ref {
-    margin-bottom: 5px;
-    margin-left: 5px;
-    height: 50px;
-    display: block !important;
-    border: none !important;
-}
-
-.rtl .message_inline_ref {
-    margin-left: unset;
-    margin-right: 5px;
-}
-
-.twitter-image img,
-.message_inline_image img,
-.message_inline_ref img {
-    height: auto;
-    max-height: 100%;
-    float: left;
-    margin-right: 10px;
-}
-
-.message_inline_image img {
-    cursor: zoom-in;
-}
-
-.youtube-video img,
-.vimeo-video img,
-.embed-video img {
-    cursor: pointer;
-}
-
-.rtl .twitter-image img,
-.rtl .message_inline_image img,
-.rtl .message_inline_ref img {
-    float: right;
-    margin-right: unset;
-    margin-left: 10px;
-}
-
-#message-edit-history .message_inline_image img {
-    max-height: 100px;
-}
-
-li .message_inline_image img {
-    float: none;
-}
-
-.youtube-video .fa-play::before,
-.embed-video .fa-play::before {
-    position: absolute;
-    margin: var(--margin-top, 32px) 0 0 var(--margin-left, 45px);
-    padding: 5px 8px 5px 10px;
-    font-size: 12px;
-    border-radius: 4px;
-    background-color: hsl(0, 0%, 0%);
-    color: hsl(0, 0%, 100%);
-    opacity: 0.7;
-    top: 0;
-    left: 0;
-}
-
-.message_inline_image_title {
-    font-weight: bold;
-}
-
-.katex-html {
-    line-height: initial;
-    white-space: initial;
-}
-
-.katex-display .katex-html {
-    line-height: 3em;
-}
-
-.katex-display {
-    margin: 0em 0;
-}
-
-.tex-error {
-    color: hsl(0, 0%, 50%);
-}
-
 .operator_value {
     font-family: Monaco, Menlo, Consolas, "Courier New", monospace;
     color: hsl(353, 70%, 65%);
@@ -2474,8 +1964,6 @@ li .message_inline_image img {
     left: -50%;
     top: -43px;
     z-index: 1;
-    -webkit-border-radius: 6px;
-    -moz-border-radius: 6px;
     border-radius: 6px;
 }
 
@@ -2493,8 +1981,6 @@ li .message_inline_image img {
     left: -50%;
     top: -43px;
     z-index: 1;
-    -webkit-border-radius: 6px;
-    -moz-border-radius: 6px;
     border-radius: 6px;
 }
 
@@ -2538,29 +2024,37 @@ li .message_inline_image img {
     text-align: center;
 }
 
-button.primary {
-    background-color: hsl(207, 21%, 62%);
-    padding: 2px;
-    color: hsl(0, 0%, 100%);
+.small_square_button {
+    padding: 0;
     border: none;
-    border-radius: 0px;
-}
-
-button.primary:hover {
-    background-color: hsl(207, 25%, 65%);
-}
-
-button.primary:focus {
-    outline: none;
-}
-
-button.topic_edit_save,
-button.topic_edit_cancel {
     font-size: 12px;
     width: 18px;
     height: 18px;
-    vertical-align: baseline;
     border-radius: 4px;
+    margin-bottom: 3px;
+
+    &:focus {
+        outline: none;
+    }
+
+    &.small_square_check {
+        background-color: hsl(166, 35%, 57%);
+        color: hsl(0, 0%, 95%);
+
+        &:hover {
+            background-color: hsl(156, 30%, 50%);
+            color: hsl(0, 0%, 100%);
+        }
+    }
+
+    &.small_square_x {
+        background-color: hsl(0, 0%, 100%);
+        color: hsl(0, 0%, 47%);
+
+        &:hover {
+            color: hsl(0, 0%, 18%);
+        }
+    }
 }
 
 div.topic_edit_spinner {
@@ -2725,21 +2219,6 @@ div.topic_edit_spinner .loading_indicator_spinner {
     top: 3px;
 }
 
-.twitter-tweet {
-    border: 1px solid hsl(0, 0%, 87%);
-    padding: .5em .75em;
-    margin-bottom: 0.25em;
-    word-break: break-word;
-    min-height: 48px;
-}
-
-.twitter-avatar {
-    float: left;
-    width: 48px;
-    height: 48px;
-    margin-right: .75em;
-}
-
 /* FIXME: Combine this rule with the one in portico.css somehow? */
 #pw_strength {
     width: 100%;
@@ -2834,6 +2313,7 @@ div.topic_edit_spinner .loading_indicator_spinner {
     display: none;
     margin-top: 5px;
     margin-left: 47px;
+    position: relative;
 }
 
 /* Reduce some of the heavy padding from Bootstrap. */
@@ -2850,8 +2330,6 @@ div.topic_edit_spinner .loading_indicator_spinner {
 #message_edit_form textarea {
     width: 100%;
     min-width: 206px;
-    -webkit-box-sizing: border-box;
-    -moz-box-sizing: border-box;
     box-sizing: border-box;
 }
 
@@ -2871,40 +2349,6 @@ div.topic_edit_spinner .loading_indicator_spinner {
     padding-right: 3px;
     line-height: 22px;
     margin-left: -15px;
-}
-
-.message_body_gravatar {
-    width: 20px;
-    height: 20px;
-    margin: 2px 2px 2px 0px;
-    vertical-align: text-bottom;
-}
-
-.user-group-mention,
-.user-mention {
-    background-color: hsl(0, 0%, 93%);
-    border-radius: 3px;
-    padding: 0 0.2em;
-    box-shadow: 0px 0px 0px 1px hsl(0, 0%, 80%);
-    margin-right: 2px;
-    margin-left: 2px;
-    white-space: nowrap;
-    background: -moz-linear-gradient(top, hsla(0, 0%, 0%, 0.1) 0%, hsla(0, 0%, 0%, 0.0) 100%);
-    background: -webkit-gradient(linear, left top, left bottom, color-stop(0%, hsla(0, 0%, 0%, 0.1)), color-stop(100%, hsla(0, 0%, 0%, 0.0)));
-    background: -webkit-linear-gradient(top, hsla(0, 0%, 0%, 0.1) 0%, hsla(0, 0%, 0%, 0.0) 100%);
-    background: -o-linear-gradient(top, hsla(0, 0%, 0%, 0.1) 0%, hsla(0, 0%, 0%, 0.0) 100%);
-    background: -ms-linear-gradient(top, hsla(0, 0%, 0%, 0.1) 0%, hsla(0, 0%, 0%, 0.0) 100%);
-    background: linear-gradient(to bottom, hsla(0, 0%, 0%, 0.1) 0%, hsla(0, 0%, 0%, 0.0) 100%);
-    display: inline-block;
-    margin-bottom: 1px;
-}
-
-.user-mention-me :not(.silent) {
-    background-color: hsl(112, 88%, 87%);
-}
-
-.alert-word {
-    background-color: hsla(102, 85%, 57%, 0.5);
 }
 
 #home {
@@ -2940,10 +2384,6 @@ div.topic_edit_spinner .loading_indicator_spinner {
 .no-drag {
     user-drag: none;
     user-select: none;
-    -moz-user-select: none;
-    -webkit-user-drag: none;
-    -webkit-user-select: none;
-    -ms-user-select: none;
 }
 
 .user_popover_email {

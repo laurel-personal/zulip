@@ -1,4 +1,3 @@
-
 import itertools
 import logging
 import re
@@ -9,7 +8,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from typing import Any, Callable, Dict, List, \
-    Optional, Set, Tuple, Type, Union, cast
+    Optional, Set, Tuple, Type, Union
 
 import pytz
 from django.conf import settings
@@ -32,7 +31,6 @@ from analytics.models import BaseCount, InstallationCount, \
 from zerver.decorator import require_server_admin, require_server_admin_api, \
     to_non_negative_int, to_utc_datetime, zulip_login_required, require_non_guest_user
 from zerver.lib.exceptions import JsonableError
-from zerver.lib.json_encoder_for_html import JSONEncoderForHTML
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_success
 from zerver.lib.timestamp import convert_to_UTC, timestamp_to_datetime
@@ -68,7 +66,7 @@ def render_stats(request: HttpRequest, data_url_suffix: str, target_name: str,
     return render(request,
                   'analytics/stats.html',
                   context=dict(target_name=target_name,
-                               page_params=JSONEncoderForHTML().encode(page_params)))
+                               page_params=page_params))
 
 @zulip_login_required
 def stats(request: HttpRequest) -> HttpResponse:
@@ -243,7 +241,7 @@ def get_chart_data(request: HttpRequest, user_profile: UserProfile, chart_name: 
         if end is None:
             end = max(last_successful_fill(stat.property) or
                       datetime.min.replace(tzinfo=timezone_utc) for stat in stats)
-        if end is None or start > end:
+        if start > end:
             logging.warning("User from realm %s attempted to access /stats, but the computed "
                             "start time: %s (creation of realm or installation) is later than the computed "
                             "end time: %s (last successful analytics update). Is the "
@@ -265,7 +263,7 @@ def get_chart_data(request: HttpRequest, user_profile: UserProfile, chart_name: 
     id_value = {
         InstallationCount: -1,
         RealmCount: realm.id,
-        RemoteInstallationCount: cast(RemoteZulipServer, server).id if server is not None else None,
+        RemoteInstallationCount: server.id if server is not None else None,
         # TODO: RemoteRealmCount logic doesn't correctly handle
         # filtering by server_id as well.
         RemoteRealmCount: remote_realm_id,
@@ -521,7 +519,7 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
                 FROM (
                     SELECT
                         realm.id as realm_id,
-                        up.email
+                        up.delivery_email
                     FROM zerver_useractivity ua
                     JOIN zerver_userprofile up
                         ON up.id = ua.user_profile_id
@@ -538,7 +536,7 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
                             '/json/users/me/pointer',
                             'update_pointer_backend'
                         )
-                    GROUP by realm.id, up.email
+                    GROUP by realm.id, up.delivery_email
                     HAVING max(last_visit) > now() - interval '7 day'
                 ) as wau_users
                 GROUP BY realm_id
@@ -579,7 +577,7 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
         is_realm_admin=True,
         is_active=True
     ):
-        realm_admins[up.realm.string_id].append(up.email)
+        realm_admins[up.realm.string_id].append(up.delivery_email)
 
     for row in rows:
         row['date_created_day'] = row['date_created'].strftime('%Y-%m-%d')
@@ -1073,13 +1071,13 @@ def support(request: HttpRequest) -> HttpResponse:
     if query:
         key_words = get_invitee_emails_set(query)
 
-        users = UserProfile.objects.filter(email__in=key_words)
+        users = UserProfile.objects.filter(delivery_email__in=key_words)
         if users:
             for user in users:
                 user.realm.realm_icon_url = realm_icon_url(user.realm)
                 user.realm.admin_emails = ", ".join(
                     user.realm.get_human_admin_users().values_list(
-                        "email",
+                        "delivery_email",
                         flat=True))
                 user.realm.default_discount = get_discount_for_realm(user.realm)
             context["users"] = users
@@ -1104,7 +1102,8 @@ def support(request: HttpRequest) -> HttpResponse:
         if realms:
             for realm in realms:
                 realm.realm_icon_url = realm_icon_url(realm)
-                realm.admin_emails = ", ".join(realm.get_human_admin_users().values_list("email", flat=True))
+                realm.admin_emails = ", ".join(realm.get_human_admin_users().values_list(
+                    "delivery_email", flat=True))
                 realm.default_discount = get_discount_for_realm(realm)
             context["realms"] = realms
     return render(request, 'analytics/support.html', context=context)

@@ -1,14 +1,16 @@
 # Production Installation
 
-Make sure you want to install a Zulip production server. If you'd
-instead like to test or develop a new feature, we recommend the
-[Zulip development server](../development/overview.html#requirements) instead.
-If you just want to play around with Zulip and see what it looks like, you
-can create a test organization at <https://zulipchat.com>.
-
 You'll need an Ubuntu or Debian system that satisfies
-[the installation requirements](../production/requirements.html), or
-you can use Zulip's [experimental Docker image](../production/deployment.html#zulip-in-docker).
+[the installation requirements](../production/requirements.html). Alternatively,
+you can use a preconfigured
+[Digital Ocean droplet](https://marketplace.digitalocean.com/apps/zulip), or
+Zulip's
+[experimental Docker image](../production/deployment.html#zulip-in-docker).
+
+Note that if you're developing for Zulip, you should install Zulip's
+[development environment](../development/overview.html) instead. If
+you're just looking to play around with Zulip and see what it looks like,
+you can create a test organization at <https://zulipchat.com/new>.
 
 ## Step 1: Download the latest release
 
@@ -29,23 +31,6 @@ tar -xf zulip-server-latest.tar.gz
 using code from our [repository on GitHub](https://github.com/zulip/zulip/).
 
 ## Step 2: Install Zulip
-
-<!---
-  The `.. only:: unreleased` syntax invokes an rST "directive"
-  called `only`, defined by Sphinx:
-    https://www.sphinx-doc.org/en/master/usage/restructuredtext/directives.html#including-content-based-on-tags
-  It's controlled by `docs/conf.py` through the `tags` object.
--->
-```eval_rst
-.. only:: unreleased
-
-   .. warning::
-      You are reading a **development version** of the Zulip documentation.
-      These instructions may not correspond to the latest Zulip Server
-      release.  See `documentation for the latest release`__.
-
-__ https://zulip.readthedocs.io/en/stable/prod-install.html
-```
 
 To set up Zulip with the most common configuration, you can run the
 installer as follows:

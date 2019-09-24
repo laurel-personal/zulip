@@ -3,7 +3,8 @@ import logging
 import time
 import traceback
 from typing import Any, AnyStr, Dict, \
-    Iterable, List, MutableMapping, Optional
+    Iterable, List, MutableMapping, Optional, \
+    Union
 
 from django.conf import settings
 from django.contrib.sessions.backends.base import UpdateError
@@ -211,7 +212,8 @@ def write_log_line(log_data: MutableMapping[str, Any], path: str, method: str, r
         logger.info(logger_line)
 
     if (is_slow_query(time_delta, path)):
-        queue_json_publish("slow_queries", "%s (%s)" % (logger_line, email))
+        queue_json_publish("slow_queries", dict(
+            query="%s (%s)" % (logger_line, email)))
 
     if settings.PROFILE_ALL_REQUESTS:
         log_data["prof"].disable()
@@ -222,14 +224,14 @@ def write_log_line(log_data: MutableMapping[str, Any], path: str, method: str, r
     if 400 <= status_code < 500 and status_code not in [401, 404, 405]:
         assert error_content_iter is not None
         error_content_list = list(error_content_iter)
-        if error_content_list:
+        if not error_content_list:
             error_data = u''
         elif isinstance(error_content_list[0], str):
             error_data = u''.join(error_content_list)
         elif isinstance(error_content_list[0], bytes):
             error_data = repr(b''.join(error_content_list))
-        if len(error_data) > 100:
-            error_data = u"[content more than 100 characters]"
+        if len(error_data) > 200:
+            error_data = u"[content more than 200 characters]"
         logger.info('status=%3d, data=%s, uid=%s' % (status_code, error_data, email))
 
 class LogRequests(MiddlewareMixin):
@@ -336,7 +338,12 @@ class RateLimitMiddleware(MiddlewareMixin):
                 response['X-RateLimit-Remaining'] = str(ratelimit_user_results['remaining'])
         return response
 
-    def process_exception(self, request: HttpRequest, exception: Exception) -> Optional[HttpResponse]:
+    # TODO: When we have Django stubs, we should be able to fix the
+    # type of exception back to just Exception; the problem is without
+    # stubs, mypy doesn't know that RateLimited's superclass
+    # PermissionDenied inherits from Exception.
+    def process_exception(self, request: HttpRequest,
+                          exception: Union[Exception, RateLimited]) -> Optional[HttpResponse]:
         if isinstance(exception, RateLimited):
             entity_type = str(exception)  # entity type is passed to RateLimited when raising
             resp = json_error(

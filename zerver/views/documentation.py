@@ -10,7 +10,7 @@ import random
 import re
 
 from zerver.lib.integrations import CATEGORIES, INTEGRATIONS, HubotIntegration, \
-    WebhookIntegration, EmailIntegration
+    WebhookIntegration
 from zerver.lib.request import has_request_variables, REQ
 from zerver.lib.subdomains import get_subdomain
 from zerver.models import Realm
@@ -54,9 +54,6 @@ class ApiURLView(TemplateView):
         context = super().get_context_data(**kwargs)
         add_api_uri_context(context, self.request)
         return context
-
-class APIView(ApiURLView):
-    template_name = 'zerver/api.html'
 
 
 class MarkdownDirectoryView(ApiURLView):
@@ -196,8 +193,6 @@ def integration_doc(request: HttpRequest, integration_name: str=REQ(default=None
         context['integration_url'] = integration.url[3:]
     if isinstance(integration, HubotIntegration):
         context['hubot_docs_url'] = integration.hubot_docs_url
-    if isinstance(integration, EmailIntegration):
-        context['email_gateway_example'] = settings.EMAIL_GATEWAY_EXAMPLE
 
     doc_html_str = render_markdown_path(integration.doc, context)
 

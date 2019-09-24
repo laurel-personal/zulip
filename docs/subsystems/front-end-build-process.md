@@ -54,9 +54,8 @@ first add it to the appropriate place under `static/`.
 - Portico JavaScript ("portico" means for logged-out pages) lives under
   `static/js/portico`.
 - Custom SVG graphics living under `static/assets/icons` are compiled into
-  custom icon webfonts that live under `static/generated/icons/fonts` by
-  `tools/setup/generate-custom-icon-webfont` according to the
-  `static/icons/fonts/template.hbs` template.
+  custom icon webfonts by webfont-loader according to the
+  `static/assets/icons/template.hbs` template.
 
 For your asset to be included in a development/production bundle, it
 needs to be accessible from one of the entry points defined in
@@ -71,17 +70,15 @@ needs to be accessible from one of the entry points defined in
   `app` and `common` bundles.
 * If it's just used on a single standalone page (e.g. `/stats`),
   create a new entry point in `tools/webpack.assets.json`. Use the
-  `render_bundle` function in the relevant Jinja2 template to inject
-  the compiled JS and CSS.
+  `bundle` macro (defined in `templates/zerver/base.html`) in the
+  relevant Jinja2 template to inject the compiled JS and CSS.
 
 If you want to test minified files in development, look for the
-`PIPELINE_ENABLED =` line in `zproject/settings.py` and set it to `True`
--- or just set `DEBUG = False`.
+`DEBUG =` line in `zproject/settings.py` and set it to `False`.
 
 ## How it works in production
 
-You can learn a lot from reading about django-pipeline, but a few
-useful notes are:
+A few useful notes are:
 * Zulip installs static assets in production in
 `/home/zulip/prod-static`.  When a new version is deployed, before the
 server is restarted, files are copied into that directory.

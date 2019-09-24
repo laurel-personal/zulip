@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Iterable, List, \
     Mapping, Optional, Sequence, Set, Tuple
 
 import ujson
+from datetime import datetime
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandParser
@@ -14,12 +15,13 @@ from django.utils.timezone import timedelta as timezone_timedelta
 
 from zerver.lib.actions import STREAM_ASSIGNMENT_COLORS, check_add_realm_emoji, \
     do_change_is_admin, do_send_messages, do_update_user_custom_profile_data, \
-    try_add_realm_custom_profile_field
+    try_add_realm_custom_profile_field, try_add_realm_default_custom_profile_field
 from zerver.lib.bulk_create import bulk_create_streams, bulk_create_users
 from zerver.lib.cache import cache_set
 from zerver.lib.generate_test_data import create_test_data
 from zerver.lib.onboarding import create_if_missing_realm_internal_bots
 from zerver.lib.push_notifications import logger as push_notifications_logger
+from zerver.lib.storage import static_path
 from zerver.lib.users import add_service
 from zerver.lib.url_preview.preview import CACHE_NAME as PREVIEW_CACHE_NAME
 from zerver.lib.user_groups import create_user_group
@@ -89,6 +91,12 @@ class Command(BaseCommand):
                             type=int,
                             default=500,
                             help='The number of messages to create.')
+
+        parser.add_argument('-b', '--batch-size',
+                            dest='batch_size',
+                            type=int,
+                            default=1000,
+                            help='How many messages to process in a single batch')
 
         parser.add_argument('--extra-users',
                             dest='extra_users',
@@ -169,9 +177,10 @@ class Command(BaseCommand):
             # Start by clearing all the data in our database
             clear_database()
 
-            # Create our two default realms
+            # Create our three default realms
             # Could in theory be done via zerver.lib.actions.do_create_realm, but
             # welcome-bot (needed for do_create_realm) hasn't been created yet
+            create_internal_realm()
             zulip_realm = Realm.objects.create(
                 string_id="zulip", name="Zulip Dev", emails_restricted_to_domains=True,
                 description="The Zulip development environment default organization."
@@ -215,24 +224,14 @@ class Command(BaseCommand):
 
             # These bots are directly referenced from code and thus
             # are needed for the test suite.
-            all_realm_bots = [(bot['name'], bot['email_template'] % (settings.INTERNAL_BOT_DOMAIN,))
-                              for bot in settings.INTERNAL_BOTS]
             zulip_realm_bots = [
-                ("Zulip New User Bot", "new-user-bot@zulip.com"),
                 ("Zulip Error Bot", "error-bot@zulip.com"),
                 ("Zulip Default Bot", "default-bot@zulip.com"),
-                ("Welcome Bot", "welcome-bot@zulip.com"),
             ]
-
             for i in range(options["extra_bots"]):
                 zulip_realm_bots.append(('Extra Bot %d' % (i,), 'extrabot%d@zulip.com' % (i,)))
-            zulip_realm_bots.extend(all_realm_bots)
-            create_users(zulip_realm, zulip_realm_bots, bot_type=UserProfile.DEFAULT_BOT)
 
-            # Initialize the email gateway bot as an API Super User
-            email_gateway_bot = get_system_bot(settings.EMAIL_GATEWAY_BOT)
-            email_gateway_bot.is_api_super_user = True
-            email_gateway_bot.save()
+            create_users(zulip_realm, zulip_realm_bots, bot_type=UserProfile.DEFAULT_BOT)
 
             zoe = get_user("zoe@zulip.com", zulip_realm)
             zulip_webhook_bots = [
@@ -361,12 +360,7 @@ class Command(BaseCommand):
                                                                   hint="Or your personal blog's URL")
             mentor = try_add_realm_custom_profile_field(zulip_realm, "Mentor",
                                                         CustomProfileField.USER)
-            external_account_field_data = {
-                'subtype': 'github'
-            }  # type: ProfileFieldData
-            github_profile = try_add_realm_custom_profile_field(zulip_realm, "GitHub",
-                                                                CustomProfileField.EXTERNAL_ACCOUNT,
-                                                                field_data=external_account_field_data)
+            github_profile = try_add_realm_default_custom_profile_field(zulip_realm, "github")
 
             # Fill in values for Iago and Hamlet
             hamlet = get_user("hamlet@zulip.com", zulip_realm)
@@ -402,7 +396,7 @@ class Command(BaseCommand):
         user_profiles = list(UserProfile.objects.filter(is_bot=False))  # type: List[UserProfile]
 
         # Create a test realm emoji.
-        IMAGE_FILE_PATH = os.path.join(settings.STATIC_ROOT, 'images', 'test-images', 'checkbox.png')
+        IMAGE_FILE_PATH = static_path('images/test-images/checkbox.png')
         with open(IMAGE_FILE_PATH, 'rb') as fp:
             check_add_realm_emoji(zulip_realm, 'green_tick', iago, fp)
 
@@ -450,7 +444,7 @@ class Command(BaseCommand):
             jobs.append((count, personals_pairs, options, self.stdout.write, random.randint(0, 10**10)))
 
         for job in jobs:
-            send_messages(job)
+            generate_and_send_messages(job)
 
         if options["delete"]:
             # Create the "website" and "API" clients; if we don't, the
@@ -529,11 +523,6 @@ class Command(BaseCommand):
                 ]
                 create_users(zulip_realm, internal_zulip_users_nosubs, bot_type=UserProfile.DEFAULT_BOT)
 
-            zulip_cross_realm_bots = [
-                ("Zulip Feedback Bot", "feedback@zulip.com"),
-            ]
-            create_users(zulip_realm, zulip_cross_realm_bots, bot_type=UserProfile.DEFAULT_BOT)
-
             # Mark all messages as read
             UserMessage.objects.all().update(flags=UserMessage.flags.read)
 
@@ -555,6 +544,20 @@ class Command(BaseCommand):
                 call_command('populate_analytics_db')
             self.stdout.write("Successfully populated test database.\n")
 
+def create_internal_realm() -> None:
+    internal_realm = Realm.objects.create(string_id=settings.SYSTEM_BOT_REALM)
+
+    internal_realm_bots = [(bot['name'], bot['email_template'] % (settings.INTERNAL_BOT_DOMAIN,))
+                           for bot in settings.INTERNAL_BOTS]
+    internal_realm_bots += [
+        ("Zulip Feedback Bot", "feedback@zulip.com"),
+    ]
+    create_users(internal_realm, internal_realm_bots, bot_type=UserProfile.DEFAULT_BOT)
+
+    # Initialize the email gateway bot as an API Super User
+    email_gateway_bot = get_system_bot(settings.EMAIL_GATEWAY_BOT)
+    do_change_is_admin(email_gateway_bot, True, permission="api_super_user")
+
 recipient_hash = {}  # type: Dict[int, Recipient]
 def get_recipient_by_id(rid: int) -> Recipient:
     if rid in recipient_hash:
@@ -568,8 +571,8 @@ def get_recipient_by_id(rid: int) -> Recipient:
 # - multiple personals converastions
 # - multiple messages per subject
 # - both single and multi-line content
-def send_messages(data: Tuple[int, Sequence[Sequence[int]], Mapping[str, Any],
-                              Callable[[str], Any], int]) -> int:
+def generate_and_send_messages(data: Tuple[int, Sequence[Sequence[int]], Mapping[str, Any],
+                                           Callable[[str], Any], int]) -> int:
     (tot_messages, personals_pairs, options, output, random_seed) = data
     random.seed(random_seed)
 
@@ -588,9 +591,11 @@ def send_messages(data: Tuple[int, Sequence[Sequence[int]], Mapping[str, Any],
         huddle_members[h] = [s.user_profile.id for s in
                              Subscription.objects.filter(recipient_id=h)]
 
+    message_batch_size = options['batch_size']
     num_messages = 0
     random_max = 1000000
     recipients = {}  # type: Dict[int, Tuple[int, int, Dict[str, Any]]]
+    messages = []
     while num_messages < tot_messages:
         saved_data = {}  # type: Dict[str, Any]
         message = Message()
@@ -638,38 +643,62 @@ def send_messages(data: Tuple[int, Sequence[Sequence[int]], Mapping[str, Any],
             message.subject = stream.name + str(random.randint(1, 3))
             saved_data['subject'] = message.subject
 
-        # Spoofing time not supported with threading
-        if options['threads'] != 1:
-            message.pub_date = timezone_now()
-        else:
-            # Distrubutes 80% of messages starting from 5 days ago, over a period
-            # of 3 days. Then, distributes remaining messages over past 24 hours.
-            spoofed_date = timezone_now() - timezone_timedelta(days = 5)
-            if (num_messages < tot_messages * 0.8):
-                # Maximum of 3 days ahead, convert to minutes
-                time_ahead = 3 * 24 * 60
-                time_ahead //= int(tot_messages * 0.8)
-            else:
-                time_ahead = 24 * 60
-                time_ahead //= int(tot_messages * 0.2)
-
-            spoofed_minute = random.randint(time_ahead * num_messages, time_ahead * (num_messages + 1))
-            spoofed_date += timezone_timedelta(minutes = spoofed_minute)
-            message.pub_date = spoofed_date
-
-        # We disable USING_RABBITMQ here, so that deferred work is
-        # executed in do_send_message_messages, rather than being
-        # queued.  This is important, because otherwise, if run-dev.py
-        # wasn't running when populate_db was run, a developer can end
-        # up with queued events that reference objects from a previous
-        # life of the database, which naturally throws exceptions.
-        settings.USING_RABBITMQ = False
-        do_send_messages([{'message': message}])
-        settings.USING_RABBITMQ = True
+        message.pub_date = choose_pub_date(num_messages, tot_messages, options['threads'])
+        messages.append(message)
 
         recipients[num_messages] = (message_type, message.recipient.id, saved_data)
         num_messages += 1
+
+        if (num_messages % message_batch_size) == 0:
+            # Send the batch and empty the list:
+            send_messages(messages)
+            messages = []
+
+    if len(messages) > 0:
+        # If there are unsent messages after exiting the loop, send them:
+        send_messages(messages)
+
     return tot_messages
+
+def send_messages(messages: List[Message]) -> None:
+    # We disable USING_RABBITMQ here, so that deferred work is
+    # executed in do_send_message_messages, rather than being
+    # queued.  This is important, because otherwise, if run-dev.py
+    # wasn't running when populate_db was run, a developer can end
+    # up with queued events that reference objects from a previous
+    # life of the database, which naturally throws exceptions.
+    settings.USING_RABBITMQ = False
+    do_send_messages([{'message': message} for message in messages])
+    settings.USING_RABBITMQ = True
+
+def choose_pub_date(num_messages: int, tot_messages: int, threads: int) -> datetime:
+    # Spoofing time not supported with threading
+    if threads != 1:
+        return timezone_now()
+
+    # Distrubutes 80% of messages starting from 5 days ago, over a period
+    # of 3 days. Then, distributes remaining messages over past 24 hours.
+    amount_in_first_chunk = int(tot_messages * 0.8)
+    amount_in_second_chunk = tot_messages - amount_in_first_chunk
+    if (num_messages < amount_in_first_chunk):
+        # Distribute starting from 5 days ago, over a period
+        # of 3 days:
+        spoofed_date = timezone_now() - timezone_timedelta(days = 5)
+        interval_size = 3 * 24 * 60 * 60 / amount_in_first_chunk
+        lower_bound = interval_size * num_messages
+        upper_bound = interval_size * (num_messages + 1)
+
+    else:
+        # We're in the last 20% of messages, distribute them over the last 24 hours:
+        spoofed_date = timezone_now() - timezone_timedelta(days = 1)
+        interval_size = 24 * 60 * 60 / amount_in_second_chunk
+        lower_bound = interval_size * (num_messages - amount_in_first_chunk)
+        upper_bound = interval_size * (num_messages - amount_in_first_chunk + 1)
+
+    offset_seconds = random.uniform(lower_bound, upper_bound)
+    spoofed_date += timezone_timedelta(seconds=offset_seconds)
+
+    return spoofed_date
 
 def create_user_presences(user_profiles: Iterable[UserProfile]) -> None:
     for user in user_profiles:

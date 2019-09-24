@@ -1,4 +1,3 @@
-
 import logging
 
 from argparse import ArgumentParser
@@ -23,12 +22,7 @@ def sync_ldap_user_data(user_profiles: List[UserProfile]) -> None:
         # This will save the user if relevant, and will do nothing if the user
         # does not exist.
         try:
-            if sync_user_from_ldap(u):
-                logger.info("Updated %s." % (u.email,))
-            else:
-                logger.warning("Did not find %s in LDAP." % (u.email,))
-                if settings.LDAP_DEACTIVATE_NON_MATCHING_USERS:
-                    logger.info("Deactivated non-matching user: %s" % (u.email,))
+            sync_user_from_ldap(u, logger)
         except ZulipLDAPException as e:
             logger.error("Error attempting to update user %s:" % (u.email,))
             logger.error(e)
@@ -42,7 +36,8 @@ class Command(ZulipBaseCommand):
     def handle(self, *args: Any, **options: Any) -> None:
         if options.get('realm_id') is not None:
             realm = self.get_realm(options)
-            user_profiles = self.get_users(options, realm, is_bot=False)
+            user_profiles = self.get_users(options, realm, is_bot=False,
+                                           include_deactivated=True)
         else:
             user_profiles = UserProfile.objects.select_related().filter(is_bot=False)
         sync_ldap_user_data(user_profiles)

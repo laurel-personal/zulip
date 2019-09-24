@@ -68,7 +68,7 @@ Zulip also has about a dozen smaller tests suites:
   `/help` user documentation site, and related pages.
 - `tools/test-api`: Tests that the API documentation at `/api`
   actually works; the actual code for this is defined in
-  `zerver/lib/api_test_helpers.py`.
+  `zerver/openapi/python_examples.py`.
 - `test-locked-requirements`: Verifies that developers didn't forget
   to run `tools/update-locked-requirements` after modifying
   `requirements/*.in`.  See
@@ -102,19 +102,7 @@ something valuable to helping keep Zulip bug-free.
 
 ### Possible testing issues
 
-- When running the test suite, if you get an error like this:
-
-  ```
-      sqlalchemy.exc.ProgrammingError: (ProgrammingError) function ts_match_locs_array(unknown, text, tsquery) does not   exist
-      LINE 2: ...ECT message_id, flags, subject, rendered_content, ts_match_l...
-                                                                   ^
-  ```
-
-  … then you need to install tsearch-extras, described
-  above. Afterwards, re-run the `init*-db` and the
-  `do-destroy-rebuild*-database` scripts.
-
-- Or, when running the test suite, if you get an error involving Git that looks like this:
+- When running the test suite, if you get an error involving Git that looks like this:
 
   ```
       gitlint| An error occurred while executing '/usr/bin/git rev-list --max-count=-1 upstream/master..HEAD': b"fatal: ambiguous argument 'upstream/master..HEAD': unknown revision or path not in the working tree.\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'"

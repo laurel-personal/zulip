@@ -9,7 +9,8 @@ from django.db.models import Q
 from django.core.cache.backends.base import BaseCache
 from django.http import HttpRequest
 
-from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar, Tuple
+from typing import Any, Callable, Dict, Iterable, List, \
+    Optional, Sequence, TypeVar, Tuple, TYPE_CHECKING
 
 from zerver.lib.utils import statsd, statsd_key, make_safe_digest
 import time
@@ -19,7 +20,7 @@ import sys
 import os
 import hashlib
 
-if False:
+if TYPE_CHECKING:
     # These modules have to be imported for type annotations but
     # they cannot be imported at runtime due to cyclic dependency.
     from zerver.models import UserProfile, Realm, Message
@@ -215,9 +216,21 @@ def cache_delete_many(items: Iterable[str], cache_name: Optional[str]=None) -> N
         KEY_PREFIX + item for item in items)
     remote_cache_stats_finish()
 
-# Generic_bulk_cached fetch and its helpers
+# Generic_bulk_cached fetch and its helpers.  We start with declaring
+# a few type variables that help define its interface.
+
+# Type for the cache's keys; will typically be int or str.
 ObjKT = TypeVar('ObjKT')
+
+# Type for items to be fetched from the database (e.g. a Django model object)
 ItemT = TypeVar('ItemT')
+
+# Type for items to be stored in the cache (e.g. a dictionary serialization).
+# Will equal ItemT unless a cache_transformer is specified.
+CacheItemT = TypeVar('CacheItemT')
+
+# Type for compressed items for storage in the cache.  For
+# serializable objects, will be the object; if encoded, bytes.
 CompressedItemT = TypeVar('CompressedItemT')
 
 def default_extractor(obj: CompressedItemT) -> ItemT:
@@ -229,8 +242,8 @@ def default_setter(obj: ItemT) -> CompressedItemT:
 def default_id_fetcher(obj: ItemT) -> ObjKT:
     return obj.id  # type: ignore # Need ItemT/CompressedItemT typevars to be a Django protocol
 
-def default_cache_transformer(obj: ItemT) -> ItemT:
-    return obj
+def default_cache_transformer(obj: ItemT) -> CacheItemT:
+    return obj  # type: ignore # Need a type assert that ItemT=CacheItemT
 
 # Required Arguments are as follows:
 # * object_ids: The list of object ids to look up
@@ -248,24 +261,33 @@ def default_cache_transformer(obj: ItemT) -> ItemT:
 #   function of the objects, not the objects themselves)
 def generic_bulk_cached_fetch(
         cache_key_function: Callable[[ObjKT], str],
-        query_function: Callable[[List[ObjKT]], Iterable[Any]],
-        object_ids: Iterable[ObjKT],
-        extractor: Callable[[CompressedItemT], ItemT] = default_extractor,
-        setter: Callable[[ItemT], CompressedItemT] = default_setter,
+        query_function: Callable[[List[ObjKT]], Iterable[ItemT]],
+        object_ids: Sequence[ObjKT],
+        extractor: Callable[[CompressedItemT], CacheItemT] = default_extractor,
+        setter: Callable[[CacheItemT], CompressedItemT] = default_setter,
         id_fetcher: Callable[[ItemT], ObjKT] = default_id_fetcher,
-        cache_transformer: Callable[[ItemT], ItemT] = default_cache_transformer
-) -> Dict[ObjKT, ItemT]:
+        cache_transformer: Callable[[ItemT], CacheItemT] = default_cache_transformer,
+) -> Dict[ObjKT, CacheItemT]:
+    if len(object_ids) == 0:
+        # Nothing to fetch.
+        return {}
+
     cache_keys = {}  # type: Dict[ObjKT, str]
     for object_id in object_ids:
         cache_keys[object_id] = cache_key_function(object_id)
     cached_objects_compressed = cache_get_many([cache_keys[object_id]
                                                 for object_id in object_ids])  # type: Dict[str, Tuple[CompressedItemT]]
-    cached_objects = {}  # type: Dict[str, ItemT]
+    cached_objects = {}  # type: Dict[str, CacheItemT]
     for (key, val) in cached_objects_compressed.items():
         cached_objects[key] = extractor(cached_objects_compressed[key][0])
     needed_ids = [object_id for object_id in object_ids if
                   cache_keys[object_id] not in cached_objects]
-    db_objects = query_function(needed_ids)
+
+    # Only call query_function if there are some ids to fetch from the database:
+    if len(needed_ids) > 0:
+        db_objects = query_function(needed_ids)
+    else:
+        db_objects = []
 
     items_for_remote_cache = {}  # type: Dict[str, Tuple[CompressedItemT]]
     for obj in db_objects:
@@ -299,6 +321,11 @@ def preview_url_cache_key(url: str) -> str:
 
 def display_recipient_cache_key(recipient_id: int) -> str:
     return "display_recipient_dict:%d" % (recipient_id,)
+
+def display_recipient_bulk_get_users_by_id_cache_key(user_id: int) -> str:
+    # Cache key function for a function for bulk fetching users, used internally
+    # by display_recipient code.
+    return 'bulk_fetch_display_recipients:' + user_profile_by_id_cache_key(user_id)
 
 def user_profile_by_email_cache_key(email: str) -> str:
     # See the comment in zerver/lib/avatar_hash.py:gravatar_hash for why we
@@ -358,6 +385,7 @@ def get_stream_cache_key(stream_name: str, realm_id: int) -> str:
 def delete_user_profile_caches(user_profiles: Iterable['UserProfile']) -> None:
     # Imported here to avoid cyclic dependency.
     from zerver.lib.users import get_all_api_keys
+    from zerver.models import is_cross_realm_bot_email
     keys = []
     for user_profile in user_profiles:
         keys.append(user_profile_by_email_cache_key(user_profile.delivery_email))
@@ -365,6 +393,9 @@ def delete_user_profile_caches(user_profiles: Iterable['UserProfile']) -> None:
         for api_key in get_all_api_keys(user_profile):
             keys.append(user_profile_by_api_key_cache_key(api_key))
         keys.append(user_profile_cache_key(user_profile.email, user_profile.realm))
+        if user_profile.is_bot and is_cross_realm_bot_email(user_profile.email):
+            # Handle clearing system bots from their special cache.
+            keys.append(bot_profile_cache_key(user_profile.email))
 
     cache_delete_many(keys)
 
@@ -373,6 +404,7 @@ def delete_display_recipient_cache(user_profile: 'UserProfile') -> None:
     recipient_ids = Subscription.objects.filter(user_profile=user_profile)
     recipient_ids = recipient_ids.values_list('recipient_id', flat=True)
     keys = [display_recipient_cache_key(rid) for rid in recipient_ids]
+    keys.append(display_recipient_bulk_get_users_by_id_cache_key(user_profile.id))
     cache_delete_many(keys)
 
 def changed(kwargs: Any, fields: List[str]) -> bool:

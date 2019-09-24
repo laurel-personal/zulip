@@ -236,8 +236,10 @@ def get_add_team_body(payload: Dict[str, Any]) -> str:
     )
 
 def get_release_body(payload: Dict[str, Any]) -> str:
-    return u"{} published [the release]({}).".format(
+    return u"{} {} [release for tag {}]({}).".format(
         get_sender_name(payload),
+        payload['action'],
+        payload['release']['tag_name'],
         payload['release']['html_url'],
     )
 
@@ -357,6 +359,13 @@ Check [{name}]({html_url}) {status} ({conclusion}). ([{short_hash}]({commit_url}
 
     return template.format(**kwargs)
 
+def get_star_body(payload: Dict[str, Any]) -> str:
+    template = "{user} {action} the repository."
+    return template.format(
+        user=payload['sender']['login'],
+        action='starred' if payload['action'] == 'created' else 'unstarred'
+    )
+
 def get_ping_body(payload: Dict[str, Any]) -> str:
     return get_setup_webhook_message('GitHub', get_sender_name(payload))
 
@@ -445,6 +454,7 @@ EVENT_FUNCTION_MAPPER = {
     'push_tags': get_push_tags_body,
     'release': get_release_body,
     'repository': get_repository_body,
+    'star': get_star_body,
     'status': get_status_body,
     'watch': get_watch_body,
 }
@@ -455,6 +465,7 @@ IGNORED_EVENTS = [
     'check_suite',
     'organization',
     'milestone',
+    'meta',
 ]
 
 @api_key_only_webhook_view('GitHub', notify_bot_owner_on_invalid_json=True)
@@ -493,7 +504,7 @@ def get_event(request: HttpRequest, payload: Dict[str, Any], branches: str) -> O
         # Unsupported pull_request events
         if action in ('labeled', 'unlabeled', 'review_request_removed'):
             return None
-    if event == 'push':
+    elif event == 'push':
         if is_commit_push_event(payload):
             if branches is not None:
                 branch = get_branch_name_from_ref(payload['ref'])

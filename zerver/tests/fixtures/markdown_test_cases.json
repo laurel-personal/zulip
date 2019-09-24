@@ -90,9 +90,9 @@
     },
     {
       "name": "fenced_quote_with_hashtag",
-      "input": "```quote\n# line 1\n# line 2\n```",
-      "expected_output": "<blockquote>\n<p># line 1<br>\n# line 2</p>\n</blockquote>",
-      "text_content": "> # line 1\n> # line 2\n"
+      "input": "```quote\n# line 1\n#line 2\n```",
+      "expected_output": "<blockquote>\n<h1>line 1</h1>\n<p>#line 2</p>\n</blockquote>",
+      "text_content": "> line 1\n> #line 2\n"
     },
     {
       "name": "dangerous_block",
@@ -119,6 +119,31 @@
       "expected_output": "<p>notcode</p>",
       "marked_expected_output": "<p>  notcode</p>",
       "text_content": "notcode"
+    },
+    {
+      "name": "hashheading_enabled",
+      "input": "# Hello World",
+      "expected_output": "<h1>Hello World</h1>"
+    },
+    {
+      "name": "hashheading_needs_spaces",
+      "input": "#Hello World",
+      "expected_output": "<p>#Hello World</p>"
+    },
+    {
+      "name": "hashheading_multiple_spaces",
+      "input": "#  Hello World",
+      "expected_output": "<h1>Hello World</h1>"
+    },
+    {
+      "name": "hashheading_6_levels",
+      "input": "###### Hello World",
+      "expected_output": "<h6>Hello World</h6>"
+    },
+    {
+      "name": "hashheading_7_levels",
+      "input": "####### Hello World",
+      "expected_output": "<p>####### Hello World</p>"
     },
     {
       "name": "reference_links_disabled",
@@ -267,27 +292,27 @@
     },
     {
       "name": "numbered_list",
-      "input": "1. A\n 2. B",
-      "expected_output": "<p>1. A<br>\n 2. B</p>",
-      "text_content": "1. A\n 2. B"
+      "input": "1. A\n2. B\n  3. C",
+      "expected_output": "<ol>\n<li>A</li>\n<li>B<ol start=\"3\">\n<li>C</li>\n</ol>\n</li>\n</ol>",
+      "text_content": "1. A\n2. B\n  3. C"
     },
     {
-      "name": "auto_renumbered_list",
-      "input": "1. A\n1. B\n 1. C\n1. D",
-      "expected_output": "<p>1. A<br>\n2. B<br>\n 3. C<br>\n4. D</p>",
-      "text_content": "1. A\n2. B\n 3. C\n4. D"
+      "name": "auto_renumbered_list_trick",
+      "input": "1. A\n1. B\n  1. C\n1. D",
+      "expected_output": "<ol>\n<li>A</li>\n<li>B<ol>\n<li>C</li>\n</ol>\n</li>\n<li>D</li>\n</ol>",
+      "text_content": "1. A\n2. B\n  1. C\n3. D"
     },
     {
       "name": "auto_renumbered_list_from",
       "input": "3. A\n3. B\n3. C\n3. D",
-      "expected_output": "<p>3. A<br>\n4. B<br>\n5. C<br>\n6. D</p>",
+      "expected_output": "<ol start=\"3\">\n<li>A</li>\n<li>B</li>\n<li>C</li>\n<li>D</li>\n</ol>",
       "text_content": "3. A\n4. B\n5. C\n6. D"
     },
     {
-      "name": "not_auto_renumbered_list",
-      "input": "1. A\n3. B\n 2. C\n1. D",
-      "expected_output": "<p>1. A<br>\n3. B<br>\n 2. C<br>\n1. D</p>",
-      "text_content": "1. A\n3. B\n 2. C\n1. D"
+      "name": "two_auto_renumbered_lists",
+      "input": "1. A\n3. B\n  2. C\n1. D",
+      "expected_output": "<ol>\n<li>A</li>\n<li>B<ol start=\"2\">\n<li>C</li>\n</ol>\n</li>\n<li>D</li>\n</ol>",
+      "text_content": "1. A\n2. B\n  2. C\n3. D"
     },
     {
       "name": "linkify_interference",
@@ -346,6 +371,21 @@
     {
       "name": "only_non_image_link",
       "input": "https://github.com",
+      "expected_output": "<p><a href=\"https://github.com\" target=\"_blank\" title=\"https://github.com\">https://github.com</a></p>"
+    },
+    {
+      "name": "link_with_text",
+      "input": "[hello](https://github.com)",
+      "expected_output": "<p><a href=\"https://github.com\" target=\"_blank\" title=\"https://github.com\">hello</a></p>"
+    },
+    {
+      "name": "link_without_text",
+      "input": "[](https://github.com)",
+      "expected_output": "<p><a href=\"https://github.com\" target=\"_blank\" title=\"https://github.com\">https://github.com</a></p>"
+    },
+    {
+      "name": "link_with_empty_text",
+      "input": "[  ](https://github.com)",
       "expected_output": "<p><a href=\"https://github.com\" target=\"_blank\" title=\"https://github.com\">https://github.com</a></p>"
     },
     {
@@ -735,8 +775,9 @@
     {
       "name": "auto_renumbered_list_blankline",
       "input": "1. A\n\n1. B\n\n1. C\n\n1. D\nordinary paragraph\n1. AA\n\n1. BB",
-      "expected_output": "<p>1. A<br>\n2. B<br>\n3. C<br>\n4. D<br>\nordinary paragraph<br>\n1. AA<br>\n2. BB</p>",
-      "text_content": "1. A\n2. B\n3. C\n4. D\nordinary paragraph\n1. AA\n2. BB"
+      "expected_output": "<ol>\n<li>\n<p>A</p>\n</li>\n<li>\n<p>B</p>\n</li>\n<li>\n<p>C</p>\n</li>\n<li>\n<p>D<br>\nordinary paragraph</p>\n</li>\n<li>\n<p>AA</p>\n</li>\n<li>\n<p>BB</p>\n</li>\n</ol>",
+      "marked_expected_output": "<ol>\n<li><p>A</p>\n</li>\n<li><p>B</p>\n</li>\n<li><p>C</p>\n</li>\n<li><p>D<br>\nordinary paragraph</p>\n</li>\n<li><p>AA</p>\n</li>\n<li><p>BB</p>\n</li>\n</ol>",
+      "text_content": "1. A\n2. B\n3. C\n4. D\nordinary paragraph\n5. AA\n6. BB"
     }
   ],
   "linkify_tests": [

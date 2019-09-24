@@ -21,7 +21,7 @@ from zerver.models import (
     Recipient,
 )
 
-from zerver.lib.actions import ensure_stream
+from zerver.lib.actions import ensure_stream, do_deactivate_realm, do_deactivate_user
 
 from zerver.lib.email_mirror import (
     process_message, process_missed_message,
@@ -59,37 +59,42 @@ from typing import Any, Callable, Dict, Mapping, Union, Optional
 
 class TestEncodeDecode(ZulipTestCase):
     def _assert_options(self, options: Dict[str, bool], show_sender: bool=False,
-                        include_footer: bool=False, include_quotations: bool=False) -> None:
+                        include_footer: bool=False, include_quotes: bool=False) -> None:
         self.assertEqual(show_sender, ('show_sender' in options) and options['show_sender'])
         self.assertEqual(include_footer, ('include_footer' in options) and options['include_footer'])
-        self.assertEqual(include_quotations, ('include_quotations' in options) and options['include_quotations'])
+        self.assertEqual(include_quotes, ('include_quotes' in options) and options['include_quotes'])
 
     def test_encode_decode(self) -> None:
         realm = get_realm('zulip')
         stream_name = 'dev. help'
         stream = ensure_stream(realm, stream_name)
         email_address = encode_email_address(stream)
-        self.assertTrue(email_address.startswith('dev-help'))
-        self.assertTrue(email_address.endswith('@testserver'))
+        self.assertEqual(email_address, "dev-help.{}@testserver".format(stream.email_token))
+
+        # The default form of the email address (with an option - "include-footer"):
+        token, options = decode_email_address(
+            "dev-help.{}.include-footer@testserver".format(stream.email_token)
+        )
+        self._assert_options(options, include_footer=True)
+        self.assertEqual(token, stream.email_token)
+
+        # Using + instead of . as the separator is also supported for backwards compatibility,
+        # since that was the original form of addresses that we used:
+        token, options = decode_email_address(
+            "dev-help+{}+include-footer@testserver".format(stream.email_token)
+        )
+        self._assert_options(options, include_footer=True)
+        self.assertEqual(token, stream.email_token)
+
         token, options = decode_email_address(email_address)
         self._assert_options(options)
         self.assertEqual(token, stream.email_token)
 
-        parts = email_address.split('@')
-        parts[0] += "+include-footer+show-sender+include-quotations"
-        email_address_all_options = '@'.join(parts)
+        # We also handle mixing + and . but it shouldn't be recommended to users.
+        email_address_all_options = "dev-help.{}+include-footer.show-sender+include-quotes@testserver"
+        email_address_all_options = email_address_all_options.format(stream.email_token)
         token, options = decode_email_address(email_address_all_options)
-        self._assert_options(options, show_sender=True, include_footer=True, include_quotations=True)
-        self.assertEqual(token, stream.email_token)
-
-        email_address_dots = email_address.replace('+', '.')
-        token, options = decode_email_address(email_address_dots)
-        self._assert_options(options)
-        self.assertEqual(token, stream.email_token)
-
-        email_address_dots_all_options = email_address_all_options.replace('+', '.')
-        token, options = decode_email_address(email_address_dots_all_options)
-        self._assert_options(options, show_sender=True, include_footer=True, include_quotations=True)
+        self._assert_options(options, show_sender=True, include_footer=True, include_quotes=True)
         self.assertEqual(token, stream.email_token)
 
         email_address = email_address.replace('@testserver', '@zulip.org')
@@ -106,7 +111,7 @@ class TestEncodeDecode(ZulipTestCase):
             self.assertEqual(token, stream.email_token)
 
             token, options = decode_email_address(email_address_all_options)
-            self._assert_options(options, show_sender=True, include_footer=True, include_quotations=True)
+            self._assert_options(options, show_sender=True, include_footer=True, include_quotes=True)
             self.assertEqual(token, stream.email_token)
 
         with self.assertRaises(ZulipEmailForwardError):
@@ -134,7 +139,7 @@ class TestEncodeDecode(ZulipTestCase):
         asciiable_stream_name = "ąężć"
         stream = ensure_stream(realm, asciiable_stream_name)
         email_address = encode_email_address(stream)
-        self.assertTrue(email_address.startswith("aezc+"))
+        self.assertTrue(email_address.startswith("aezc."))
 
     def test_decode_ignores_stream_name(self) -> None:
         stream = get_stream("Denmark", get_realm("zulip"))
@@ -143,6 +148,14 @@ class TestEncodeDecode(ZulipTestCase):
 
         # get the email_token:
         token = decode_email_address(stream_to_address)[0]
+        self.assertEqual(token, stream.email_token)
+
+    def test_encode_with_show_sender(self) -> None:
+        stream = get_stream("Denmark", get_realm("zulip"))
+        stream_to_address = encode_email_address(stream, show_sender=True)
+
+        token, options = decode_email_address(stream_to_address)
+        self._assert_options(options, show_sender=True)
         self.assertEqual(token, stream.email_token)
 
 class TestGetMissedMessageToken(ZulipTestCase):
@@ -344,7 +357,7 @@ class TestStreamEmailMessagesSuccess(ZulipTestCase):
         self.assertEqual(get_display_recipient(message.recipient), stream.name)
         self.assertEqual(message.topic_name(), incoming_valid_message['Subject'])
 
-    def test_receive_stream_email_include_quotations_success(self) -> None:
+    def test_receive_stream_email_include_quotes_success(self) -> None:
         user_profile = self.example_user('hamlet')
         self.login(user_profile.email)
         self.subscribe(user_profile, "Denmark")
@@ -352,7 +365,7 @@ class TestStreamEmailMessagesSuccess(ZulipTestCase):
 
         stream_to_address = encode_email_address(stream)
         parts = stream_to_address.split('@')
-        parts[0] += "+include-quotations"
+        parts[0] += "+include-quotes"
         stream_to_address = '@'.join(parts)
 
         text = """Reply
@@ -533,7 +546,7 @@ class TestMissedMessageEmailMessageTokenMissingData(ZulipTestCase):
 
             self.assertEqual(exception_message, 'Missing missed message address data')
 
-class TestMissedPersonalMessageEmailMessages(ZulipTestCase):
+class TestMissedMessageEmailMessages(ZulipTestCase):
     def test_receive_missed_personal_message_email_messages(self) -> None:
 
         # build dummy messages for missed messages email reply
@@ -573,7 +586,6 @@ class TestMissedPersonalMessageEmailMessages(ZulipTestCase):
         self.assertEqual(message.recipient.id, user_profile.id)
         self.assertEqual(message.recipient.type, Recipient.PERSONAL)
 
-class TestMissedHuddleMessageEmailMessages(ZulipTestCase):
     def test_receive_missed_huddle_message_email_messages(self) -> None:
 
         # build dummy messages for missed messages email reply
@@ -620,7 +632,6 @@ class TestMissedHuddleMessageEmailMessages(ZulipTestCase):
         self.assertEqual(message.sender, self.example_user('cordelia'))
         self.assertEqual(message.recipient.type, Recipient.HUDDLE)
 
-class TestMissedStreamMessageEmailMessages(ZulipTestCase):
     def test_receive_missed_stream_message_email_messages(self) -> None:
         # build dummy messages for missed messages email reply
         # have Hamlet send a message to stream Denmark, that Othello
@@ -660,6 +671,70 @@ class TestMissedStreamMessageEmailMessages(ZulipTestCase):
         self.assertEqual(message.sender, self.example_user('othello'))
         self.assertEqual(message.recipient.type, Recipient.STREAM)
         self.assertEqual(message.recipient.id, usermessage.message.recipient.id)
+
+    def test_missed_message_email_response_from_deactivated_user(self) -> None:
+        self.subscribe(self.example_user("hamlet"), "Denmark")
+        self.subscribe(self.example_user("othello"), "Denmark")
+        email = self.example_email('hamlet')
+        self.login(email)
+        result = self.client_post("/json/messages", {"type": "stream",
+                                                     "topic": "test topic",
+                                                     "content": "test_receive_missed_stream_message_email_messages",
+                                                     "client": "test suite",
+                                                     "to": "Denmark"})
+        self.assert_json_success(result)
+
+        user_profile = self.example_user('othello')
+        message = most_recent_message(user_profile)
+
+        mm_address = create_missed_message_address(user_profile, message)
+
+        do_deactivate_user(user_profile)
+
+        incoming_valid_message = MIMEText('TestMissedMessageEmailMessages Body')
+
+        incoming_valid_message['Subject'] = 'TestMissedMessageEmailMessages Subject'
+        incoming_valid_message['From'] = self.example_email('othello')
+        incoming_valid_message['To'] = mm_address
+        incoming_valid_message['Reply-to'] = self.example_email('othello')
+
+        initial_last_message = self.get_last_message()
+        process_message(incoming_valid_message)
+
+        # Since othello is deactivated, his message shouldn't be posted:
+        self.assertEqual(initial_last_message, self.get_last_message())
+
+    def test_missed_message_email_response_from_deactivated_realm(self) -> None:
+        self.subscribe(self.example_user("hamlet"), "Denmark")
+        self.subscribe(self.example_user("othello"), "Denmark")
+        email = self.example_email('hamlet')
+        self.login(email)
+        result = self.client_post("/json/messages", {"type": "stream",
+                                                     "topic": "test topic",
+                                                     "content": "test_receive_missed_stream_message_email_messages",
+                                                     "client": "test suite",
+                                                     "to": "Denmark"})
+        self.assert_json_success(result)
+
+        user_profile = self.example_user('othello')
+        message = most_recent_message(user_profile)
+
+        mm_address = create_missed_message_address(user_profile, message)
+
+        do_deactivate_realm(user_profile.realm)
+
+        incoming_valid_message = MIMEText('TestMissedMessageEmailMessages Body')
+
+        incoming_valid_message['Subject'] = 'TestMissedMessageEmailMessages Subject'
+        incoming_valid_message['From'] = self.example_email('othello')
+        incoming_valid_message['To'] = mm_address
+        incoming_valid_message['Reply-to'] = self.example_email('othello')
+
+        initial_last_message = self.get_last_message()
+        process_message(incoming_valid_message)
+
+        # Since othello's realm is deactivated, his message shouldn't be posted:
+        self.assertEqual(initial_last_message, self.get_last_message())
 
 class TestEmptyGatewaySetting(ZulipTestCase):
     def test_missed_message(self) -> None:

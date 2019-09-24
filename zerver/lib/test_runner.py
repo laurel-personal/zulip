@@ -1,10 +1,9 @@
-
 from functools import partial
 import random
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, \
-    Type, cast, TypeVar
-from unittest import loader, runner  # type: ignore  # Mypy cannot pick these up.
+    Type, TypeVar, Union
+from unittest import loader, runner
 from unittest.result import TestResult
 
 from django.conf import settings
@@ -56,13 +55,13 @@ def slow(slowness_reason: str) -> Callable[[Callable[..., ReturnT]], Callable[..
     as attributes of the function.  Other code can use this annotation
     as needed, e.g. to exclude these tests in "fast" mode.
     '''
-    def decorator(f: Any) -> ReturnT:
-        f.slowness_reason = slowness_reason
+    def decorator(f: Callable[..., ReturnT]) -> Callable[..., ReturnT]:
+        setattr(f, 'slowness_reason', slowness_reason)
         return f
 
     return decorator
 
-def is_known_slow_test(test_method: Any) -> bool:
+def is_known_slow_test(test_method: Callable[..., ReturnT]) -> bool:
     return hasattr(test_method, 'slowness_reason')
 
 def full_test_name(test: TestCase) -> str:
@@ -95,12 +94,14 @@ def report_slow_tests() -> None:
             print('      consider removing @slow decorator')
             print('      This may no longer be true: %s' % (slowness_reason,))
 
-def enforce_timely_test_completion(test_method: Any, test_name: str,
-                                   delay: float, result: TestResult) -> None:
+def enforce_timely_test_completion(test_method: Callable[..., ReturnT], test_name: str,
+                                   delay: float, result: unittest.TestResult) -> None:
     if hasattr(test_method, 'slowness_reason'):
         max_delay = 2.0  # seconds
     else:
         max_delay = 0.4  # seconds
+
+    assert isinstance(result, TextTestResult) or isinstance(result, RemoteTestResult)
 
     if delay > max_delay:
         msg = '** Test is TOO slow: %s (%.3f s)\n' % (test_name, delay)
@@ -125,7 +126,7 @@ def run_test(test: TestCase, result: TestResult) -> bool:
 
     if not hasattr(test, "_pre_setup"):
         msg = "Test doesn't have _pre_setup; something is wrong."
-        error_pre_setup = (Exception, Exception(msg), None)  # type: Tuple[Any, Any, Any]
+        error_pre_setup = (Exception, Exception(msg), None)
         result.addError(test, error_pre_setup)
         return True
     test._pre_setup()
@@ -152,16 +153,16 @@ class TextTestResult(runner.TextTestResult):
         self.failed_tests = []  # type: List[str]
 
     def addInfo(self, test: TestCase, msg: str) -> None:
-        self.stream.write(msg)
-        self.stream.flush()
+        self.stream.write(msg)  # type: ignore # https://github.com/python/typeshed/issues/3139
+        self.stream.flush()  # type: ignore # https://github.com/python/typeshed/issues/3139
 
     def addInstrumentation(self, test: TestCase, data: Dict[str, Any]) -> None:
         append_instrumentation_data(data)
 
     def startTest(self, test: TestCase) -> None:
         TestResult.startTest(self, test)
-        self.stream.writeln("Running {}".format(full_test_name(test)))
-        self.stream.flush()
+        self.stream.writeln("Running {}".format(full_test_name(test)))  # type: ignore # https://github.com/python/typeshed/issues/3139
+        self.stream.flush()  # type: ignore # https://github.com/python/typeshed/issues/3139
 
     def addSuccess(self, *args: Any, **kwargs: Any) -> None:
         TestResult.addSuccess(self, *args, **kwargs)
@@ -178,9 +179,10 @@ class TextTestResult(runner.TextTestResult):
 
     def addSkip(self, test: TestCase, reason: str) -> None:
         TestResult.addSkip(self, test, reason)
-        self.stream.writeln("** Skipping {}: {}".format(full_test_name(test),
-                                                        reason))
-        self.stream.flush()
+        self.stream.writeln("** Skipping {}: {}".format(  # type: ignore # https://github.com/python/typeshed/issues/3139
+            full_test_name(test),
+            reason))
+        self.stream.flush()  # type: ignore # https://github.com/python/typeshed/issues/3139
 
 class RemoteTestResult(django_runner.RemoteTestResult):
     """
@@ -224,7 +226,7 @@ def run_subsuite(args: SubsuiteArgs) -> Tuple[int, Any]:
 from django.db.backends.postgresql.creation import DatabaseCreation
 def _replacement_destroy_test_db(self: DatabaseCreation,
                                  test_database_name: str,
-                                 verbosity: Any) -> None:
+                                 verbosity: int) -> None:
     """Replacement for Django's _destroy_test_db that removes the
     unnecessary sleep(1)."""
     with self.connection._nodb_connection.cursor() as cursor:
@@ -333,7 +335,7 @@ class TestSuite(unittest.TestSuite):
         """
         topLevel = False
         if getattr(result, '_testRunEntered', False) is False:
-            result._testRunEntered = topLevel = True
+            result._testRunEntered = topLevel = True  # type: ignore
 
         for test in self:
             # but this is correct. Taken from unittest.
@@ -346,7 +348,7 @@ class TestSuite(unittest.TestSuite):
                 self._tearDownPreviousClass(test, result)  # type: ignore
                 self._handleModuleFixture(test, result)  # type: ignore
                 self._handleClassSetUp(test, result)  # type: ignore
-                result._previousTestClass = test.__class__
+                result._previousTestClass = test.__class__  # type: ignore
                 if (getattr(test.__class__, '_classSetupFailed', False) or
                         getattr(result, '_moduleSetUpFailed', False)):
                     continue
@@ -359,7 +361,7 @@ class TestSuite(unittest.TestSuite):
         if topLevel:
             self._tearDownPreviousClass(None, result)  # type: ignore
             self._handleModuleTearDown(result)  # type: ignore
-            result._testRunEntered = False
+            result._testRunEntered = False  # type: ignore
         return result
 
 class TestLoader(loader.TestLoader):
@@ -479,11 +481,14 @@ class Runner(DiscoverRunner):
         os.remove(filepath)
 
         # Clean up our test runs root directory.
-        if os.path.exists(TEST_RUN_DIR):
+        try:
             shutil.rmtree(TEST_RUN_DIR)
+        except OSError:
+            print("Unable to clean up the test run's directory.")
+            pass
         return super().teardown_test_environment(*args, **kwargs)
 
-    def test_imports(self, test_labels: List[str], suite: unittest.TestSuite) -> None:
+    def test_imports(self, test_labels: List[str], suite: Union[TestSuite, ParallelTestSuite]) -> None:
         prefix_old = 'unittest.loader.ModuleImportFailure.'  # Python <= 3.4
         prefix_new = 'unittest.loader._FailedTest.'  # Python > 3.4
         error_prefixes = [prefix_old, prefix_new]
@@ -554,7 +559,7 @@ class Runner(DiscoverRunner):
             write_instrumentation_reports(full_suite=full_suite, include_webhooks=include_webhooks)
         return failed, result.failed_tests
 
-def get_test_names(suite: unittest.TestSuite) -> List[str]:
+def get_test_names(suite: Union[TestSuite, ParallelTestSuite]) -> List[str]:
     if isinstance(suite, ParallelTestSuite):
         # suite is ParallelTestSuite. It will have a subsuites parameter of
         # type SubSuiteList. Each element of a SubsuiteList is a tuple whose
@@ -563,10 +568,9 @@ def get_test_names(suite: unittest.TestSuite) -> List[str]:
         # implementation details.
         return [name for subsuite in suite.subsuites for name in subsuite[1]]
     else:
-        suite = cast(TestSuite, suite)
         return [full_test_name(t) for t in get_tests_from_suite(suite)]
 
-def get_tests_from_suite(suite: TestSuite) -> TestCase:
+def get_tests_from_suite(suite: unittest.TestSuite) -> TestCase:
     for test in suite:
         if isinstance(test, TestSuite):
             for child in get_tests_from_suite(test):

@@ -9,8 +9,8 @@ from django.test import TestCase, override_settings
 from django.http import HttpResponse
 from typing import Any, Dict, List
 
-from zproject.settings import DEPLOY_ROOT
 from zerver.lib.integrations import INTEGRATIONS
+from zerver.lib.storage import static_path
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import HostRequestMock
 from zerver.lib.test_runner import slow
@@ -26,8 +26,11 @@ class DocPageTest(ZulipTestCase):
             return self.client_get(url, subdomain=subdomain, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
         return self.client_get(url, subdomain=subdomain)
 
-    def print_msg_if_error(self, response: HttpResponse) -> None:  # nocoverage
-        if response.status_code != 200 and response.get('Content-Type') == 'application/json':
+    def print_msg_if_error(self, url: str, response: HttpResponse) -> None:  # nocoverage
+        if response.status_code == 200:
+            return
+        print("Error processing URL:", url)
+        if response.get('Content-Type') == 'application/json':
             content = ujson.loads(response.content)
             print()
             print("======================================================================")
@@ -40,7 +43,7 @@ class DocPageTest(ZulipTestCase):
 
         # Test the URL on the "zephyr" subdomain
         result = self.get_doc(url, subdomain="zephyr")
-        self.print_msg_if_error(result)
+        self.print_msg_if_error(url, result)
 
         self.assertEqual(result.status_code, 200)
         self.assertIn(expected_content, str(result.content))
@@ -51,7 +54,7 @@ class DocPageTest(ZulipTestCase):
 
         # Test the URL on the root subdomain
         result = self.get_doc(url, subdomain="")
-        self.print_msg_if_error(result)
+        self.print_msg_if_error(url, result)
 
         self.assertEqual(result.status_code, 200)
         self.assertIn(expected_content, str(result.content))
@@ -66,7 +69,7 @@ class DocPageTest(ZulipTestCase):
         with self.settings(ROOT_DOMAIN_LANDING_PAGE=True):
             # Test the URL on the root subdomain with the landing page setting
             result = self.get_doc(url, subdomain="")
-            self.print_msg_if_error(result)
+            self.print_msg_if_error(url, result)
 
             self.assertEqual(result.status_code, 200)
             self.assertIn(expected_content, str(result.content))
@@ -80,7 +83,7 @@ class DocPageTest(ZulipTestCase):
 
             # Test the URL on the "zephyr" subdomain with the landing page setting
             result = self.get_doc(url, subdomain="zephyr")
-            self.print_msg_if_error(result)
+            self.print_msg_if_error(url, result)
 
             self.assertEqual(result.status_code, 200)
             self.assertIn(expected_content, str(result.content))
@@ -97,7 +100,7 @@ class DocPageTest(ZulipTestCase):
 
         def _filter_func(fp: str) -> bool:
             ignored_files = ['sidebar_index.md', 'index.md', 'missing.md']
-            return fp.endswith('.md') and fp not in ignored_files
+            return fp.endswith('.md') and not fp.startswith(".") and fp not in ignored_files
 
         files = list(filter(_filter_func, files))
 
@@ -152,9 +155,6 @@ class DocPageTest(ZulipTestCase):
         self.assertEqual(result.status_code, 301)
         self.assertIn('hello', result['Location'])
 
-        result = self.client_get('/static/favicon.ico')
-        self.assertEqual(result.status_code, 200)
-
     def test_portico_pages_open_graph_metadata(self) -> None:
         # Why Zulip
         url = '/why-zulip/'
@@ -205,17 +205,6 @@ class DocPageTest(ZulipTestCase):
         description = '<meta property="og:description" content="Zulip comes with over'
         self._test(url, title, doc_html_str=True)
         self._test(url, description, doc_html_str=True)
-
-    def test_email_integration(self) -> None:
-        self._test('/integrations/doc-html/email',
-                   'support+abcdefg@testserver', doc_html_str=True)
-
-        with self.settings(EMAIL_GATEWAY_PATTERN=''):
-            result = self.get_doc('integrations/doc-html/email', subdomain='zulip')
-            self.assertNotIn('support+abcdefg@testserver', str(result.content))
-            # if EMAIL_GATEWAY_PATTERN is empty, the main /integrations page should
-            # be rendered instead
-            self._test('/integrations/', 'native integrations.')
 
     def test_doc_html_str_non_ajax_call(self) -> None:
         # We don't need to test all the pages for 404
@@ -283,7 +272,7 @@ class HelpTest(ZulipTestCase):
 class IntegrationTest(TestCase):
     def test_check_if_every_integration_has_logo_that_exists(self) -> None:
         for integration in INTEGRATIONS.values():
-            self.assertTrue(os.path.isfile(os.path.join(DEPLOY_ROOT, integration.logo)))
+            self.assertTrue(os.path.isfile(settings.DEPLOY_ROOT + integration.logo_url), integration.name)
 
     def test_api_url_view_subdomains_base(self) -> None:
         context = dict()  # type: Dict[str, Any]
@@ -346,7 +335,7 @@ class AboutPageTest(ZulipTestCase):
         """
         # This block has unreliable test coverage due to the implicit
         # caching here, so we exclude it from coverage.
-        if not os.path.exists(settings.CONTRIBUTORS_DATA):
+        if not os.path.exists(static_path('generated/github-contributors.json')):
             # Copy the fixture file in `zerver/tests/fixtures` to `static/generated`
             update_script = os.path.join(os.path.dirname(__file__),
                                          '../../tools/update-authors-json')  # nocoverage
@@ -364,32 +353,32 @@ class AboutPageTest(ZulipTestCase):
         self.assertEqual(split_by(flat_list, 3, None), expected_result)
 
 class ConfigErrorTest(ZulipTestCase):
-    @override_settings(GOOGLE_OAUTH2_CLIENT_ID=None)
+    @override_settings(SOCIAL_AUTH_GOOGLE_KEY=None)
     def test_google(self) -> None:
-        result = self.client_get("/accounts/login/google/")
+        result = self.client_get("/accounts/login/social/google")
         self.assertEqual(result.status_code, 302)
         self.assertEqual(result.url, '/config-error/google')
         result = self.client_get(result.url)
-        self.assert_in_success_response(["google_oauth2_client_id"], result)
-        self.assert_in_success_response(["google_oauth2_client_secret"], result)
+        self.assert_in_success_response(["social_auth_google_key"], result)
+        self.assert_in_success_response(["social_auth_google_secret"], result)
         self.assert_in_success_response(["zproject/dev-secrets.conf"], result)
-        self.assert_not_in_success_response(["GOOGLE_OAUTH2_CLIENT_ID"], result)
+        self.assert_not_in_success_response(["SOCIAL_AUTH_GOOGLE_KEY"], result)
         self.assert_not_in_success_response(["zproject/dev_settings.py"], result)
         self.assert_not_in_success_response(["/etc/zulip/settings.py"], result)
         self.assert_not_in_success_response(["/etc/zulip/zulip-secrets.conf"], result)
 
-    @override_settings(GOOGLE_OAUTH2_CLIENT_ID=None)
+    @override_settings(SOCIAL_AUTH_GOOGLE_KEY=None)
     @override_settings(DEVELOPMENT=False)
     def test_google_production_error(self) -> None:
-        result = self.client_get("/accounts/login/google/")
+        result = self.client_get("/accounts/login/social/google")
         self.assertEqual(result.status_code, 302)
         self.assertEqual(result.url, '/config-error/google')
         result = self.client_get(result.url)
-        self.assert_in_success_response(["GOOGLE_OAUTH2_CLIENT_ID"], result)
+        self.assert_in_success_response(["SOCIAL_AUTH_GOOGLE_KEY"], result)
         self.assert_in_success_response(["/etc/zulip/settings.py"], result)
-        self.assert_in_success_response(["google_oauth2_client_secret"], result)
+        self.assert_in_success_response(["social_auth_google_secret"], result)
         self.assert_in_success_response(["/etc/zulip/zulip-secrets.conf"], result)
-        self.assert_not_in_success_response(["google_oauth2_client_id"], result)
+        self.assert_not_in_success_response(["social_auth_google_key"], result)
         self.assert_not_in_success_response(["zproject/dev_settings.py"], result)
         self.assert_not_in_success_response(["zproject/dev-secrets.conf"], result)
 
@@ -472,16 +461,23 @@ class PlansPageTest(ZulipTestCase):
         realm = get_realm("zulip")
         realm.plan_type = Realm.SELF_HOSTED
         realm.save(update_fields=["plan_type"])
-        result = self.client_get("/plans/", subdomain="zulip")
-        self.assertEqual(result.status_code, 302)
-        self.assertEqual(result["Location"], "https://zulipchat.com/plans")
 
-        self.login(self.example_email("iago"))
+        with self.settings(PRODUCTION=True):
+            result = self.client_get("/plans/", subdomain="zulip")
+            self.assertEqual(result.status_code, 302)
+            self.assertEqual(result["Location"], "https://zulipchat.com/plans")
 
-        # SELF_HOSTED should hide the local plans page, even if logged in
+            self.login(self.example_email("iago"))
+
+            # SELF_HOSTED should hide the local plans page, even if logged in
+            result = self.client_get("/plans/", subdomain="zulip")
+            self.assertEqual(result.status_code, 302)
+            self.assertEqual(result["Location"], "https://zulipchat.com/plans")
+
+        # But in the development environment, it renders a page
         result = self.client_get("/plans/", subdomain="zulip")
-        self.assertEqual(result.status_code, 302)
-        self.assertEqual(result["Location"], "https://zulipchat.com/plans")
+        self.assert_in_success_response([sign_up_now, buy_standard], result)
+        self.assert_not_in_success_response([current_plan], result)
 
         realm.plan_type = Realm.LIMITED
         realm.save(update_fields=["plan_type"])

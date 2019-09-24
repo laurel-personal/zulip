@@ -1,9 +1,7 @@
 import "core-js/features/promise";
-import "core-js/features/string/ends-with";
-import "core-js/features/string/starts-with";
-import "core-js/features/string/code-point-at";
 import "jquery/dist/jquery.js";
 import "underscore/underscore.js";
+import "../page_params.js";
 import "../csrf.js";
 import "../blueslip.js";
 import "../../third/bootstrap/js/bootstrap.js";
@@ -16,6 +14,6 @@ import "../../third/bootstrap/css/bootstrap-btn.css";
 import "../../third/bootstrap/css/bootstrap-responsive.css";
 import "simplebar/dist/simplebar.css";
 import "font-awesome/css/font-awesome.css";
-import "../../generated/icons/style.css";
+import "../../assets/icons/zulip-icons.font.js";
 import "source-sans-pro/source-sans-pro.css";
 import "../../styles/pygments.scss";

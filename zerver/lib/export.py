@@ -1375,7 +1375,8 @@ def do_write_stats_file_for_realm_export(output_dir: Path) -> None:
     with open(stats_file, 'w') as f:
         for fn in fns:
             f.write(os.path.basename(fn) + '\n')
-            payload = open(fn).read()
+            with open(fn, 'r') as filename:
+                payload = filename.read()
             data = ujson.loads(payload)
             for k in sorted(data):
                 f.write('%5d %s\n' % (len(data[k]), k))
@@ -1386,7 +1387,8 @@ def do_write_stats_file_for_realm_export(output_dir: Path) -> None:
 
         for fn in [avatar_file, uploads_file]:
             f.write(fn+'\n')
-            payload = open(fn).read()
+            with open(fn, 'r') as filename:
+                payload = filename.read()
             data = ujson.loads(payload)
             f.write('%5d records\n' % (len(data),))
             f.write('\n')
@@ -1699,3 +1701,16 @@ def export_realm_wrapper(realm: Realm, output_dir: str,
         os.remove(tarball_path)
         print("Successfully deleted the tarball at %s" % (tarball_path,))
     return public_url
+
+def get_realm_exports_serialized(user: UserProfile) -> List[Dict[str, Any]]:
+    all_exports = RealmAuditLog.objects.filter(realm=user.realm,
+                                               event_type=RealmAuditLog.REALM_EXPORTED)
+    exports_dict = {}
+    for export in all_exports:
+        exports_dict[export.id] = dict(
+            id=export.id,
+            export_time=export.event_time.timestamp(),
+            acting_user_id=export.acting_user.id,
+            export_data=ujson.loads(export.extra_data)
+        )
+    return sorted(exports_dict.values(), key=lambda export_dict: export_dict['id'])

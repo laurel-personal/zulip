@@ -18,7 +18,6 @@ from confirmation.models import Confirmation, create_confirmation_link, Multiuse
 from confirmation import settings as confirmation_settings
 
 from zerver.forms import HomepageForm, WRONG_SUBDOMAIN_ERROR, check_subdomain_available
-from zerver.lib.actions import get_default_streams_for_realm
 from zerver.lib.dev_ldap_directory import init_fakeldap
 from zerver.decorator import do_two_factor_login
 from zerver.views.auth import \
@@ -38,6 +37,7 @@ from zerver.lib.actions import (
     do_create_default_stream_group,
     do_add_default_stream,
     do_create_realm,
+    get_default_streams_for_realm,
 )
 from zerver.lib.send_email import send_future_email, FromAddress, \
     deliver_email
@@ -131,15 +131,57 @@ class AddNewUserHistoryTest(ZulipTestCase):
         realm = get_realm('zulip')
         stream = Stream.objects.get(realm=realm, name='Denmark')
         DefaultStream.objects.create(stream=stream, realm=realm)
+        # Make sure at least 3 messages are sent to Denmark and it's a default stream.
+        message_id = self.send_stream_message(self.example_email('hamlet'), stream.name, "test 1")
+        self.send_stream_message(self.example_email('hamlet'), stream.name, "test 2")
+        self.send_stream_message(self.example_email('hamlet'), stream.name, "test 3")
+
         with patch("zerver.lib.actions.add_new_user_history"):
             self.register(self.nonreg_email('test'), "test")
         user_profile = self.nonreg_user('test')
-
         subs = Subscription.objects.select_related("recipient").filter(
             user_profile=user_profile, recipient__type=Recipient.STREAM)
         streams = Stream.objects.filter(id__in=[sub.recipient.type_id for sub in subs])
-        self.send_stream_message(self.example_email('hamlet'), streams[0].name, "test")
-        add_new_user_history(user_profile, streams)
+
+        # Sent a message afterwards to trigger a race between message
+        # sending and `add_new_user_history`.
+        race_message_id = self.send_stream_message(self.example_email('hamlet'),
+                                                   streams[0].name, "test")
+
+        # Overwrite ONBOARDING_UNREAD_MESSAGES to 2
+        ONBOARDING_UNREAD_MESSAGES = 2
+        with patch("zerver.lib.actions.ONBOARDING_UNREAD_MESSAGES",
+                   ONBOARDING_UNREAD_MESSAGES):
+            add_new_user_history(user_profile, streams)
+
+        # Our first message is in the user's history
+        self.assertTrue(UserMessage.objects.filter(user_profile=user_profile,
+                                                   message_id=message_id).exists())
+        # The race message is in the user's history and marked unread.
+        self.assertTrue(UserMessage.objects.filter(user_profile=user_profile,
+                                                   message_id=race_message_id).exists())
+        self.assertFalse(UserMessage.objects.get(user_profile=user_profile,
+                                                 message_id=race_message_id).flags.read.is_set)
+
+        # Verify that the ONBOARDING_UNREAD_MESSAGES latest messages
+        # that weren't the race message are marked as unread.
+        latest_messages = UserMessage.objects.filter(
+            user_profile=user_profile,
+            message__recipient__type=Recipient.STREAM
+        ).exclude(message_id=race_message_id).order_by('-message_id')[0:ONBOARDING_UNREAD_MESSAGES]
+        self.assertEqual(len(latest_messages), 2)
+        for msg in latest_messages:
+            self.assertFalse(msg.flags.read.is_set)
+
+        # Verify that older messages are correctly marked as read.
+        older_messages = UserMessage.objects.filter(
+            user_profile=user_profile,
+            message__recipient__type=Recipient.STREAM
+        ).exclude(message_id=race_message_id).order_by(
+            '-message_id')[ONBOARDING_UNREAD_MESSAGES:ONBOARDING_UNREAD_MESSAGES + 1]
+        self.assertTrue(len(older_messages) > 0)
+        for msg in older_messages:
+            self.assertTrue(msg.flags.read.is_set)
 
 class InitialPasswordTest(ZulipTestCase):
     def test_none_initial_password_salt(self) -> None:
@@ -454,7 +496,7 @@ class LoginTest(ZulipTestCase):
         with queries_captured() as queries:
             self.register(self.nonreg_email('test'), "test")
         # Ensure the number of queries we make is not O(streams)
-        self.assert_length(queries, 77)
+        self.assertEqual(len(queries), 78)
         user_profile = self.nonreg_user('test')
         self.assert_logged_in_user_id(user_profile.id)
         self.assertFalse(user_profile.enable_stream_desktop_notifications)
@@ -1229,6 +1271,17 @@ so we didn't send them an invitation. We did send invitations to everyone else!"
             scheduled_timestamp__lte=timezone_now(), type=ScheduledEmail.INVITATION_REMINDER)
         self.assertEqual(len(email_jobs_to_deliver), 0)
 
+    def test_no_invitation_reminder_when_link_expires_quickly(self) -> None:
+        self.login(self.example_email('hamlet'))
+        # Check invitation reminder email is scheduled with 4 day link expiry
+        with self.settings(INVITATION_LINK_VALIDITY_DAYS=4):
+            self.invite('alice@zulip.com', ['Denmark'])
+        self.assertEqual(ScheduledEmail.objects.filter(type=ScheduledEmail.INVITATION_REMINDER).count(), 1)
+        # Check invitation reminder email is not scheduled with 3 day link expiry
+        with self.settings(INVITATION_LINK_VALIDITY_DAYS=3):
+            self.invite('bob@zulip.com', ['Denmark'])
+        self.assertEqual(ScheduledEmail.objects.filter(type=ScheduledEmail.INVITATION_REMINDER).count(), 1)
+
     # make sure users can't take a valid confirmation key from another
     # pathway and use it with the invitation url route
     def test_confirmation_key_of_wrong_type(self) -> None:
@@ -1723,7 +1776,7 @@ class RealmCreationTest(ZulipTestCase):
     def test_create_realm_as_system_bot(self) -> None:
         result = self.client_post('/new/', {'email': 'notification-bot@zulip.com'})
         self.assertEqual(result.status_code, 200)
-        self.assert_in_response('notification-bot@zulip.com is an email address reserved', result)
+        self.assert_in_response('notification-bot@zulip.com is reserved for system bots', result)
 
     def test_create_realm_no_creation_key(self) -> None:
         """

@@ -5,7 +5,15 @@ from typing import Optional
 
 from django.conf import settings
 from django.contrib.staticfiles.storage import ManifestStaticFilesStorage
-from pipeline.storage import PipelineMixin
+
+if settings.DEBUG:
+    from django.contrib.staticfiles.finders import find
+
+    def static_path(path: str) -> str:
+        return find(path) or "/nonexistent"
+else:
+    def static_path(path: str) -> str:
+        return os.path.join(settings.STATIC_ROOT, path)
 
 class IgnoreBundlesManifestStaticFilesStorage(ManifestStaticFilesStorage):
     def hashed_name(self, name: str, content: Optional[str]=None, filename: Optional[str]=None) -> str:
@@ -35,22 +43,15 @@ class IgnoreBundlesManifestStaticFilesStorage(ManifestStaticFilesStorage):
             return name
         return super().hashed_name(name, content, filename)
 
-if settings.PRODUCTION:
+class ZulipStorage(IgnoreBundlesManifestStaticFilesStorage):
     # This is a hack to use staticfiles.json from within the
     # deployment, rather than a directory under STATIC_ROOT.  By doing
     # so, we can use a different copy of staticfiles.json for each
     # deployment, which ensures that we always use the correct static
     # assets for each deployment.
-    ManifestStaticFilesStorage.manifest_name = os.path.join(settings.DEPLOY_ROOT,
-                                                            "staticfiles.json")
-    orig_path = ManifestStaticFilesStorage.path
+    manifest_name = os.path.join(settings.DEPLOY_ROOT, "staticfiles.json")
 
-    def path(self: ManifestStaticFilesStorage, name: str) -> str:
-        if name == ManifestStaticFilesStorage.manifest_name:
+    def path(self, name: str) -> str:
+        if name == self.manifest_name:
             return name
-        return orig_path(self, name)
-    ManifestStaticFilesStorage.path = path
-
-class ZulipStorage(PipelineMixin,
-                   IgnoreBundlesManifestStaticFilesStorage):
-    pass
+        return super().path(name)

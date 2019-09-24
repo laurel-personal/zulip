@@ -1,4 +1,3 @@
-
 from typing import List, Tuple, Match
 import re
 
@@ -59,6 +58,7 @@ IGNORED_PHRASES = [
     r"Zulip",
     r"Zulip Account Security",
     r"Zulip Security",
+    r"Zulip Standard",
     r"Zulip Team",
     r"iPhone",
     r"iOS",

@@ -130,16 +130,8 @@ exports.permission_state = function () {
 
 var new_message_count = 0;
 
-exports.update_title_count = function (res) {
-    var only_show_notifiable = page_params.desktop_icon_count_display ===
-        settings_notifications.desktop_icon_count_display_values.notifiable.code;
-    if (only_show_notifiable) {
-        // DESKTOP_ICON_COUNT_DISPLAY_NOTIFIABLE
-        new_message_count = res.mentioned_message_count + res.private_message_count;
-    } else {
-        // DESKTOP_ICON_COUNT_DISPLAY_MESSAGES
-        new_message_count = res.home_unread_messages;
-    }
+exports.update_title_count = function (count) {
+    new_message_count = count;
     exports.redraw_title();
 };
 
@@ -276,6 +268,46 @@ exports.notify_above_composebox = function (note, link_class, link_msg_id, link_
     $('#out-of-view-notification').append(notification_html);
     $('#out-of-view-notification').show();
 };
+
+if (window.electron_bridge !== undefined) {
+    // The code below is for sending a message received from notification reply which
+    // is often refered to as inline reply feature. This is done so desktop app doesn't
+    // have to depend on channel.post for setting crsf_token and narrow.by_topic
+    // to narrow to the message being sent.
+    window.electron_bridge.send_notification_reply_message_supported = true;
+    window.electron_bridge.on_event('send_notification_reply_message', function (message_id, reply) {
+        var message = message_store.get(message_id);
+        var data = {
+            type: message.type,
+            content: reply,
+            to: message.type === 'private' ? message.reply_to : message.stream,
+            topic: util.get_message_topic(message),
+        };
+
+        function success() {
+            if (message.type === 'stream') {
+                narrow.by_topic(message_id, {trigger: 'desktop_notification_reply'});
+            } else {
+                narrow.by_recipient(message_id, {trigger: 'desktop_notification_reply'});
+            }
+        }
+
+        function error(error) {
+            window.electron_bridge.send_event('send_notification_reply_message_failed', {
+                data: data,
+                message_id: message_id,
+                error: error,
+            });
+        }
+
+        channel.post({
+            url: '/json/messages',
+            data: data,
+            success: success,
+            error: error,
+        });
+    });
+}
 
 function process_notification(notification) {
     var i;
@@ -672,24 +704,24 @@ exports.reify_message_id = function (opts) {
     // update that link as well
     _.each($('#out-of-view-notification a'), function (e) {
         var elem = $(e);
-        var msgid = elem.data('msgid');
+        var message_id = elem.data('message-id');
 
-        if (msgid === old_id) {
-            elem.data('msgid', new_id);
+        if (message_id === old_id) {
+            elem.data('message-id', new_id);
         }
     });
 };
 
 exports.register_click_handlers = function () {
     $('#out-of-view-notification').on('click', '.compose_notification_narrow_by_topic', function (e) {
-        var msgid = $(e.currentTarget).data('msgid');
-        narrow.by_topic(msgid, {trigger: 'compose_notification'});
+        var message_id = $(e.currentTarget).data('message-id');
+        narrow.by_topic(message_id, {trigger: 'compose_notification'});
         e.stopPropagation();
         e.preventDefault();
     });
     $('#out-of-view-notification').on('click', '.compose_notification_scroll_to_message', function (e) {
-        var msgid = $(e.currentTarget).data('msgid');
-        current_msg_list.select_id(msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        current_msg_list.select_id(message_id);
         navigate.scroll_to_selected();
         e.stopPropagation();
         e.preventDefault();

@@ -11,19 +11,12 @@ def generate_zulip_bots_static_files() -> None:
         sys.path.append(ZULIP_PATH)
 
     from typing import List
-    from zproject import settings
     from zulip_bots.lib import get_bots_directory_path
 
-    bots_dir = os.path.join(settings.STATIC_ROOT, 'generated/bots')
+    bots_dir = 'static/generated/bots'
     if os.path.isdir(bots_dir):
         # delete old static files, they could be outdated
-        try:
-            shutil.rmtree(bots_dir)
-        except OSError:
-            print("There was a permission error with Vagrant's NFS file      sharing on old versions of " +
-                  "OSX. You can fix this by upgrading to the latest OSX High Sierra, or work around it " +
-                  "by giving read/write permissions to your /zulip folder to everyone.")
-            sys.exit(1)
+        shutil.rmtree(bots_dir)
 
     os.makedirs(bots_dir, exist_ok=True)
 

@@ -58,8 +58,14 @@ exports.email_address_visibility_values = {
 
 exports.show_email = function () {
     // TODO: Extend this when we add support for admins_and_members above.
-    return page_params.realm_email_address_visibility ===
-        exports.email_address_visibility_values.everyone.code;
+    if (page_params.realm_email_address_visibility ===
+        exports.email_address_visibility_values.everyone.code) {
+        return true;
+    }
+    if (page_params.realm_email_address_visibility ===
+        exports.email_address_visibility_values.admins_only.code) {
+        return page_params.is_admin;
+    }
 };
 
 exports.get_realm_time_limits_in_minutes = function (property) {
@@ -537,7 +543,7 @@ exports.change_save_button_state = function ($element, state) {
     }
 
     if (state === "discarded") {
-        show_hide_element($element, false);
+        show_hide_element($element, false, 0);
         return;
     }
 
@@ -655,6 +661,12 @@ exports.build_page = function () {
         e.preventDefault();
         e.stopPropagation();
 
+        // This event handler detects whether after these input
+        // changes, any fields have different values from the current
+        // official values stored in the database and page_params.  If
+        // they do, we transition to the "unsaved" state showing the
+        // save/discard widget; otherwise, we hide that widget (the
+        // "discarded" state).
         var subsection = $(e.target).closest('.org-subsection-parent');
         subsection.find('.subsection-failed-status p').hide();
         subsection.find('.save-button').show();
@@ -667,7 +679,7 @@ exports.build_page = function () {
         });
 
         var save_btn_controls = subsection.find('.subsection-header .save-button-controls');
-        var button_state = show_change_process_button ? "unsaved" : "saved";
+        var button_state = show_change_process_button ? "unsaved" : "discarded";
         exports.change_save_button_state(save_btn_controls, button_state);
     });
 
@@ -1138,13 +1150,13 @@ exports.build_page = function () {
             form_data.append('file-' + i, file);
         });
         if (night) {
-            error_field = $("#realm_night_logo_file_input_error");
-            spinner = $("#upload_night_logo_spinner");
-            button_text = $("#upload_night_logo_button_text");
+            error_field = $("#night-logo-section .realm-logo-file-input-error");
+            spinner = $("#night-logo-section .upload-logo-spinner");
+            button_text = $("#night-logo-section .upload-logo-button-text");
         } else {
-            error_field = $("#realm_logo_file_input_error");
-            spinner = $("#upload_logo_spinner");
-            button_text = $("#upload_logo_button_text");
+            error_field = $("#day-logo-section .realm-logo-file-input-error");
+            spinner = $("#day-logo-section .upload-logo-spinner");
+            button_text = $("#day-logo-section .upload-logo-button-text");
         }
         spinner.expectOne();
         error_field.hide();

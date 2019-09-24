@@ -1,17 +1,16 @@
-
 import os
 import re
 import ujson
 
-from django.conf import settings
 from django.utils.translation import ugettext as _
 from typing import Optional, Tuple
 
 from zerver.lib.request import JsonableError
+from zerver.lib.storage import static_path
 from zerver.lib.upload import upload_backend
 from zerver.models import Reaction, Realm, RealmEmoji, UserProfile
 
-EMOJI_PATH = os.path.join(settings.STATIC_ROOT, "generated", "emoji")
+EMOJI_PATH = static_path("generated/emoji")
 NAME_TO_CODEPOINT_PATH = os.path.join(EMOJI_PATH, "name_to_codepoint.json")
 CODEPOINT_TO_NAME_PATH = os.path.join(EMOJI_PATH, "codepoint_to_name.json")
 EMOTICON_CONVERSIONS_PATH = os.path.join(EMOJI_PATH, "emoticon_conversions.json")
@@ -26,10 +25,10 @@ with open(EMOTICON_CONVERSIONS_PATH) as fp:
     EMOTICON_CONVERSIONS = ujson.load(fp)
 
 possible_emoticons = EMOTICON_CONVERSIONS.keys()
-possible_emoticon_regexes = map(re.escape, possible_emoticons)  # type: ignore # AnyStr/str issues
-terminal_symbols = ',.;?!()\\[\\] "\'\\n\\t'  # type: str # from composebox_typeahead.js
+possible_emoticon_regexes = (re.escape(emoticon) for emoticon in possible_emoticons)
+terminal_symbols = ',.;?!()\\[\\] "\'\\n\\t'  # from composebox_typeahead.js
 emoticon_regex = ('(?<![^{0}])(?P<emoticon>('.format(terminal_symbols)
-                  + ')|('.join(possible_emoticon_regexes)  # type: ignore # AnyStr/str issues
+                  + ')|('.join(possible_emoticon_regexes)
                   + '))(?![^{0}])'.format(terminal_symbols))
 
 # Translates emoticons to their colon syntax, e.g. `:smiley:`.

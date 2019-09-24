@@ -14,8 +14,8 @@ LOCAL_UPLOADS_DIR = os.path.join(DEPLOY_ROOT, 'var/uploads')
 
 FORWARD_ADDRESS_CONFIG_FILE = "var/forward_address.ini"
 # Check if test_settings.py set EXTERNAL_HOST.
-EXTERNAL_HOST = os.getenv('EXTERNAL_HOST')
-if EXTERNAL_HOST is None:
+external_host_env = os.getenv('EXTERNAL_HOST')
+if external_host_env is None:
     user_id = os.getuid()
     user_name = pwd.getpwuid(user_id).pw_name
     if user_name == "zulipdev":
@@ -31,6 +31,7 @@ if EXTERNAL_HOST is None:
             'zulip': 'localhost:9991'
         }
 else:
+    EXTERNAL_HOST = external_host_env
     REALM_HOSTS = {
         'zulip': EXTERNAL_HOST,
     }
@@ -43,7 +44,7 @@ AUTHENTICATION_BACKENDS = (
     'zproject.backends.DevAuthBackend',
     'zproject.backends.EmailAuthBackend',
     'zproject.backends.GitHubAuthBackend',
-    'zproject.backends.GoogleMobileOauth2Backend',
+    'zproject.backends.GoogleAuthBackend',
     # 'zproject.backends.AzureADAuthBackend',
 )
 
@@ -134,11 +135,11 @@ if FAKE_LDAP_MODE:
             "custom_profile_field__phone_number": "phoneNumber",
         }
     elif FAKE_LDAP_MODE == 'c':
-        LDAP_EMAIL_ATTR = 'email'  # type: Optional[str]
+        LDAP_EMAIL_ATTR = 'email'
         AUTH_LDAP_USER_ATTR_MAP = {
             "full_name": "cn",
         }
-    AUTHENTICATION_BACKENDS += ('zproject.backends.ZulipLDAPAuthBackend',)  # type: ignore # tuple hackery
+    AUTHENTICATION_BACKENDS += ('zproject.backends.ZulipLDAPAuthBackend',)
 
 THUMBOR_URL = 'http://127.0.0.1:9995'
 THUMBNAIL_IMAGES = True
@@ -146,3 +147,6 @@ THUMBNAIL_IMAGES = True
 SEARCH_PILLS_ENABLED = os.getenv('SEARCH_PILLS_ENABLED', False)
 
 BILLING_ENABLED = True
+
+# Test Custom TOS template rendering
+TERMS_OF_SERVICE = 'corporate/terms.md'

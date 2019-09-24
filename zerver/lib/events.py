@@ -17,7 +17,7 @@ from zerver.lib.alert_words import user_alert_words
 from zerver.lib.avatar import avatar_url, get_avatar_field
 from zerver.lib.bot_config import load_bot_config_template
 from zerver.lib.hotspots import get_next_hotspots
-from zerver.lib.integrations import EMBEDDED_BOTS
+from zerver.lib.integrations import EMBEDDED_BOTS, WEBHOOK_INTEGRATIONS
 from zerver.lib.message import (
     aggregate_unread_data,
     apply_unread_message_event,
@@ -25,12 +25,13 @@ from zerver.lib.message import (
     get_recent_conversations_recipient_id,
     get_recent_private_conversations,
     get_starred_message_ids,
+    remove_message_id_from_unread_mgs,
 )
 from zerver.lib.narrow import check_supported_events_narrow_filter, read_stop_words
 from zerver.lib.push_notifications import push_notifications_enabled
 from zerver.lib.soft_deactivation import reactivate_user_if_soft_deactivated
 from zerver.lib.realm_icon import realm_icon_url
-from zerver.lib.realm_logo import realm_logo_url
+from zerver.lib.realm_logo import get_realm_logo_url
 from zerver.lib.request import JsonableError
 from zerver.lib.stream_subscription import handle_stream_notifications_compatibility
 from zerver.lib.topic import TOPIC_NAME
@@ -116,9 +117,9 @@ def get_raw_user_data(realm: Realm, client_gravatar: bool) -> Dict[int, Dict[str
     }
 
 def add_realm_logo_fields(state: Dict[str, Any], realm: Realm) -> None:
-    state['realm_logo_url'] = realm_logo_url(realm, night = False)
+    state['realm_logo_url'] = get_realm_logo_url(realm, night = False)
     state['realm_logo_source'] = realm.logo_source
-    state['realm_night_logo_url'] = realm_logo_url(realm, night = True)
+    state['realm_night_logo_url'] = get_realm_logo_url(realm, night = True)
     state['realm_night_logo_source'] = realm.night_logo_source
     state['max_logo_file_size'] = settings.MAX_LOGO_FILE_SIZE
 
@@ -289,6 +290,17 @@ def fetch_initial_state_data(user_profile: UserProfile,
                                         'config': load_bot_config_template(bot.name)})
         state['realm_embedded_bots'] = realm_embedded_bots
 
+    # This does not have an apply_events counterpart either since
+    # this data is mostly static.
+    if want('realm_incoming_webhook_bots'):
+        realm_incoming_webhook_bots = []
+        for integration in WEBHOOK_INTEGRATIONS:
+            realm_incoming_webhook_bots.append({
+                'name': integration.name,
+                'config': {c[1]: c[2] for c in integration.config_options}
+            })
+        state['realm_incoming_webhook_bots'] = realm_incoming_webhook_bots
+
     if want('recent_private_conversations'):
         # A data structure containing records of this form:
         #
@@ -358,17 +370,6 @@ def fetch_initial_state_data(user_profile: UserProfile,
         state['zulip_version'] = ZULIP_VERSION
 
     return state
-
-
-def remove_message_id_from_unread_mgs(state: Dict[str, Dict[str, Any]],
-                                      message_id: int) -> None:
-    raw_unread = state['raw_unread_msgs']
-
-    for key in ['pm_dict', 'stream_dict', 'huddle_dict']:
-        raw_unread[key].pop(message_id, None)
-
-    raw_unread['unmuted_stream_msgs'].discard(message_id)
-    raw_unread['mentions'].discard(message_id)
 
 def apply_events(state: Dict[str, Any], events: Iterable[Dict[str, Any]],
                  user_profile: UserProfile, client_gravatar: bool,
@@ -687,8 +688,9 @@ def apply_event(state: Dict[str, Any],
         else:
             state['max_message_id'] = -1
 
-        remove_id = event['message_id']
-        remove_message_id_from_unread_mgs(state, remove_id)
+        if 'raw_unread_msgs' in state:
+            remove_id = event['message_id']
+            remove_message_id_from_unread_mgs(state['raw_unread_msgs'], remove_id)
 
         # The remainder of this block is about maintaining recent_private_conversations
         if 'raw_recent_private_conversations' not in state or event['message_type'] != 'private':
@@ -731,9 +733,9 @@ def apply_event(state: Dict[str, Any],
         # We don't return messages in `/register`, so most flags we
         # can ignore, but we do need to update the unread_msgs data if
         # unread state is changed.
-        if event['flag'] == 'read' and event['operation'] == 'add':
+        if 'raw_unread_msgs' in state and event['flag'] == 'read' and event['operation'] == 'add':
             for remove_id in event['messages']:
-                remove_message_id_from_unread_mgs(state, remove_id)
+                remove_message_id_from_unread_mgs(state['raw_unread_msgs'], remove_id)
         if event['flag'] == 'starred' and event['operation'] == 'add':
             state['starred_messages'] += event['messages']
         if event['flag'] == 'starred' and event['operation'] == 'remove':
@@ -751,6 +753,10 @@ def apply_event(state: Dict[str, Any],
                                       if realm_domain['domain'] != event['domain']]
     elif event['type'] == "realm_emoji":
         state['realm_emoji'] = event['realm_emoji']
+    elif event['type'] == 'realm_export':
+        # These realm export events are only available to
+        # administrators, and aren't included in page_params.
+        pass
     elif event['type'] == "alert_words":
         state['alert_words'] = event['alert_words']
     elif event['type'] == "muted_topics":
@@ -812,8 +818,6 @@ def apply_event(state: Dict[str, Any],
             user_status.pop(user_id, None)
 
         state['user_status'] = user_status
-    elif event['type'] == 'realm_exported':
-        pass
     else:
         raise AssertionError("Unexpected event type %s" % (event['type'],))
 

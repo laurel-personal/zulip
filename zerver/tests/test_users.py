@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from email.utils import parseaddr
+
 from typing import (Any, Dict, Iterable, List, Mapping,
                     Optional, TypeVar, Union)
 
@@ -15,11 +17,12 @@ from zerver.lib.test_classes import (
 from zerver.models import UserProfile, Recipient, Realm, \
     RealmDomain, UserHotspot, get_client, \
     get_user, get_realm, get_stream, get_stream_recipient, \
-    get_source_profile, \
+    get_source_profile, get_system_bot, \
     ScheduledEmail, check_valid_user_ids, \
-    get_user_by_id_in_realm_including_cross_realm, CustomProfileField
+    get_user_by_id_in_realm_including_cross_realm, CustomProfileField, \
+    InvalidFakeEmailDomain, get_fake_email_domain
 
-from zerver.lib.avatar import avatar_url
+from zerver.lib.avatar import avatar_url, get_gravatar_url
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.send_email import send_future_email, clear_scheduled_emails, \
     deliver_email
@@ -38,6 +41,9 @@ from zerver.lib.topic_mutes import add_topic_mute
 from zerver.lib.stream_topic import StreamTopicTarget
 from zerver.lib.users import user_ids_to_users, access_user_by_id, \
     get_accounts_for_email
+
+from django.conf import settings
+from django.test import override_settings
 
 import datetime
 import mock
@@ -188,7 +194,7 @@ class PermissionTest(ZulipTestCase):
         members = result.json()['members']
         hamlet = find_dict(members, 'user_id', user.id)
         self.assertEqual(hamlet['email'], "user%s@zulip.testserver" % (user.id,))
-        self.assertEqual(hamlet['avatar_url'], "https://secure.gravatar.com/avatar/5106fb7f928d89e2f2ddb3c4c42d6949?d=identicon&version=1")
+        self.assertEqual(hamlet['avatar_url'], get_gravatar_url(hamlet['email'], 1))
         self.assertNotIn('delivery_email', hamlet)
 
         # Also verify the /events code path.  This is a bit hacky, but
@@ -213,7 +219,7 @@ class PermissionTest(ZulipTestCase):
         members = result.json()['members']
         hamlet = find_dict(members, 'user_id', user.id)
         self.assertEqual(hamlet['email'], "user%s@zulip.testserver" % (user.id,))
-        self.assertEqual(hamlet['avatar_url'], "https://secure.gravatar.com/avatar/5106fb7f928d89e2f2ddb3c4c42d6949?d=identicon&version=1")
+        self.assertEqual(hamlet['avatar_url'], get_gravatar_url(hamlet['email'], 1))
         self.assertEqual(hamlet['delivery_email'], self.example_email("hamlet"))
 
     def test_user_cannot_promote_to_admin(self) -> None:
@@ -272,7 +278,7 @@ class PermissionTest(ZulipTestCase):
             access_user_by_id(iago, self.mit_user("sipbtest").id)
 
         # Can only access bot users if allow_deactivated is passed
-        bot = self.example_user("welcome_bot")
+        bot = self.example_user("default_bot")
         access_user_by_id(iago, bot.id, allow_bots=True)
         with self.assertRaises(JsonableError):
             access_user_by_id(iago, bot.id)
@@ -433,8 +439,7 @@ class PermissionTest(ZulipTestCase):
         cordelia = self.example_user("cordelia")
         for field_dict in cordelia.profile_data:
             with self.subTest(field_name=field_dict['name']):
-                self.assertEqual(field_dict['value'], fields[field_dict['name']])  # type: ignore # Reason in comment
-            # Invalid index type for dict key, it must be str but field_dict values can be anything
+                self.assertEqual(field_dict['value'], fields[field_dict['name']])
 
         # Test admin user cannot set invalid profile data
         invalid_fields = [
@@ -651,7 +656,7 @@ class UserProfileTest(ZulipTestCase):
         realm = get_realm("zulip")
         hamlet = self.example_user('hamlet')
         othello = self.example_user('othello')
-        bot = self.example_user("welcome_bot")
+        bot = self.example_user("default_bot")
 
         # Invalid user ID
         invalid_uid = 1000  # type: Any
@@ -783,7 +788,7 @@ class UserProfileTest(ZulipTestCase):
         hamlet = self.example_user("hamlet")
 
         cordelia.default_language = "de"
-        cordelia.emojiset = "apple"
+        cordelia.emojiset = "twitter"
         cordelia.timezone = "America/Phoenix"
         cordelia.night_mode = True
         cordelia.enable_offline_email_notifications = False
@@ -808,8 +813,8 @@ class UserProfileTest(ZulipTestCase):
         self.assertEqual(cordelia.default_language, "de")
         self.assertEqual(hamlet.default_language, "en")
 
-        self.assertEqual(iago.emojiset, "apple")
-        self.assertEqual(cordelia.emojiset, "apple")
+        self.assertEqual(iago.emojiset, "twitter")
+        self.assertEqual(cordelia.emojiset, "twitter")
         self.assertEqual(hamlet.emojiset, "google-blob")
 
         self.assertEqual(iago.timezone, "America/Phoenix")
@@ -839,7 +844,7 @@ class UserProfileTest(ZulipTestCase):
         realm = get_realm('zulip')
         hamlet = self.example_user('hamlet')
         othello = self.example_user('othello')
-        bot = self.example_user('welcome_bot')
+        bot = get_system_bot(settings.WELCOME_BOT)
 
         # Pass in the ID of a cross-realm bot and a valid realm
         cross_realm_bot = get_user_by_id_in_realm_including_cross_realm(
@@ -981,7 +986,8 @@ class ActivateTest(ZulipTestCase):
         from django.core.mail import outbox
         self.assertEqual(len(outbox), 1)
         for message in outbox:
-            self.assertEqual(set([hamlet.delivery_email, iago.delivery_email]), set(message.to))
+            to_fields = [parseaddr(to_field)[1] for to_field in message.to]
+            self.assertEqual(set([hamlet.delivery_email, iago.delivery_email]), set(to_fields))
         self.assertEqual(ScheduledEmail.objects.count(), 0)
 
 class RecipientInfoTest(ZulipTestCase):
@@ -1268,3 +1274,14 @@ class GetProfileTest(ZulipTestCase):
                     user['avatar_url'],
                     avatar_url(user_profile),
                 )
+
+class FakeEmailDomainTest(ZulipTestCase):
+    @override_settings(FAKE_EMAIL_DOMAIN="invaliddomain")
+    def test_invalid_fake_email_domain(self) -> None:
+        with self.assertRaises(InvalidFakeEmailDomain):
+            get_fake_email_domain()
+
+    @override_settings(FAKE_EMAIL_DOMAIN="127.0.0.1")
+    def test_invalid_fake_email_domain_ip(self) -> None:
+        with self.assertRaises(InvalidFakeEmailDomain):
+            get_fake_email_domain()

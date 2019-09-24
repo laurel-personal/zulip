@@ -26,6 +26,8 @@ from zerver.models import Stream, Recipient, \
     get_user_profile_by_id, get_display_recipient, get_personal_recipient, \
     Message, Realm, UserProfile, get_system_bot, get_user, get_stream_by_id_in_realm
 
+from zproject.backends import is_user_active
+
 logger = logging.getLogger(__name__)
 
 def redact_email_address(error_message: str) -> str:
@@ -153,8 +155,8 @@ def mark_missed_message_address_as_used(address: str) -> None:
         raise ZulipEmailForwardError('Missed message address has already been used')
 
 def construct_zulip_body(message: message.Message, realm: Realm, show_sender: bool=False,
-                         include_quotations: bool=False, include_footer: bool=False) -> str:
-    body = extract_body(message, include_quotations)
+                         include_quotes: bool=False, include_footer: bool=False) -> str:
+    body = extract_body(message, include_quotes)
     # Remove null characters, since Zulip will reject
     body = body.replace("\x00", "")
     if not include_footer:
@@ -180,6 +182,9 @@ def send_to_missed_message_address(address: str, message: message.Message) -> No
     user_profile_id, recipient_id, subject_b = result  # type: (bytes, bytes, bytes)
 
     user_profile = get_user_profile_by_id(user_profile_id)
+    if not is_user_active(user_profile):
+        logger.warning("Sending user is not active. Ignoring this missed message email.")
+        return
     recipient = Recipient.objects.get(id=recipient_id)
 
     body = construct_zulip_body(message, user_profile.realm)
@@ -243,7 +248,7 @@ def get_message_part_by_type(message: message.Message, content_type: str) -> Opt
     return None
 
 talon_initialized = False
-def extract_body(message: message.Message, include_quotations: bool=False) -> str:
+def extract_body(message: message.Message, include_quotes: bool=False) -> str:
     import talon
     global talon_initialized
     if not talon_initialized:
@@ -254,7 +259,7 @@ def extract_body(message: message.Message, include_quotations: bool=False) -> st
     # that.
     plaintext_content = get_message_part_by_type(message, "text/plain")
     if plaintext_content:
-        if include_quotations:
+        if include_quotes:
             return plaintext_content
         else:
             return talon.quotations.extract_from_plain(plaintext_content)
@@ -262,7 +267,7 @@ def extract_body(message: message.Message, include_quotations: bool=False) -> st
     # If we only have an HTML version, try to make that look nice.
     html_content = get_message_part_by_type(message, "text/html")
     if html_content:
-        if include_quotations:
+        if include_quotes:
             return convert_html_to_markdown(html_content)
         else:
             return convert_html_to_markdown(talon.quotations.extract_from_html(html_content))
@@ -359,8 +364,8 @@ def process_stream_message(to: str, message: message.Message) -> None:
 
     stream, options = extract_and_validate(to)
     # Don't remove quotations if message is forwarded, unless otherwise specified:
-    if 'include_quotations' not in options:
-        options['include_quotations'] = is_forwarded(subject_header)
+    if 'include_quotes' not in options:
+        options['include_quotes'] = is_forwarded(subject_header)
 
     body = construct_zulip_body(message, stream.realm, **options)
     send_zulip(settings.EMAIL_GATEWAY_BOT, stream, subject, body)

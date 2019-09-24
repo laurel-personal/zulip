@@ -3,28 +3,6 @@ var render_settings_tab = require('../templates/settings_tab.hbs');
 var settings = (function () {
 
 var exports = {};
-var header_map = {
-    "your-account": i18n.t("Your account"),
-    "display-settings": i18n.t("Display settings"),
-    notifications: i18n.t("Notifications"),
-    "your-bots": i18n.t("Your bots"),
-    "alert-words": i18n.t("Alert words"),
-    "uploaded-files": i18n.t("Uploaded files"),
-    "muted-topics": i18n.t("Muted topics"),
-    "organization-profile": i18n.t("Organization profile"),
-    "organization-settings": i18n.t("Organization settings"),
-    "organization-permissions": i18n.t("Organization permissions"),
-    "emoji-settings": i18n.t("Emoji settings"),
-    "auth-methods": i18n.t("Authorization methods"),
-    "user-list-admin": i18n.t("Active users"),
-    "deactivated-users-admin": i18n.t("Deactivated users"),
-    "bot-list-admin": i18n.t("Bot list"),
-    "default-streams-list": i18n.t("Default streams"),
-    "filter-settings": i18n.t("Linkifiers"),
-    "invites-list-admin": i18n.t("Invitations"),
-    "user-groups-admin": i18n.t("User groups"),
-    "profile-field-settings": i18n.t("Profile field settings"),
-};
 
 $("body").ready(function () {
     var $sidebar = $(".form-sidebar");
@@ -101,7 +79,7 @@ function setup_settings_label() {
         enable_online_push_notifications: i18n.t("Send mobile notifications even if I'm online (useful for testing)"),
         enable_sounds: i18n.t("Audible desktop notifications"),
         pm_content_in_desktop_notifications: i18n.t("Include content of private messages in desktop notifications"),
-        desktop_icon_count_display: i18n.t("Unread messages counted in desktop app tray and webapp favicon"),
+        desktop_icon_count_display: i18n.t("Unread count summary (appears in desktop sidebar and browser tab)"),
 
         // other_notification_settings
         enable_digest_emails: i18n.t("Send digest emails when I'm away"),
@@ -140,6 +118,7 @@ exports.build_page = function () {
         push_notification_tooltip:
             settings_notifications.all_notifications.push_notification_tooltip,
         display_settings: settings_display.all_display_settings,
+        user_can_change_name: settings_account.user_can_change_name(),
     });
 
     $(".settings-box").html(rendered_settings_tab);
@@ -156,11 +135,12 @@ exports.launch = function (section) {
 };
 
 exports.set_settings_header = function (key) {
-    if (header_map[key]) {
-        $(".settings-header h1 .section").text(" / " + header_map[key]);
+    var header_text = $(`#settings_page .sidebar-list [data-section='${key}'] .text`).text();
+    if (header_text) {
+        $(".settings-header h1 .section").text(" / " + header_text);
     } else {
         blueslip.warn("Error: the key '" + key + "' does not exist in the settings" +
-            " header mapping file. Please add it.");
+            " sidebar list. Please add it.");
     }
 };
 

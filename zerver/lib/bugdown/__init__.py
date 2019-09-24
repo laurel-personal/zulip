@@ -2,8 +2,8 @@
 # detailed documentation on our markdown syntax.
 from typing import (Any, Callable, Dict, Iterable, List, NamedTuple,
                     Optional, Set, Tuple, TypeVar, Union)
-from mypy_extensions import TypedDict
 from typing.re import Match, Pattern
+from typing_extensions import TypedDict
 
 import markdown
 import logging
@@ -18,6 +18,7 @@ import ujson
 import xml.etree.cElementTree as etree
 from xml.etree.cElementTree import Element
 import ahocorasick
+from hyperlink import parse
 
 from collections import deque, defaultdict
 
@@ -26,13 +27,14 @@ import requests
 from django.conf import settings
 from django.db.models import Q
 
-from markdown.extensions import codehilite, nl2br, tables
+from markdown.extensions import codehilite, nl2br, tables, sane_lists
 from zerver.lib.bugdown import fenced_code
 from zerver.lib.bugdown.fenced_code import FENCE_RE
 from zerver.lib.camo import get_camo_url
 from zerver.lib.emoji import translate_emoticons, emoticon_regex
 from zerver.lib.mention import possible_mentions, \
     possible_user_group_mentions, extract_user_group
+from zerver.lib.storage import static_path
 from zerver.lib.url_encoding import encode_stream, hash_util_encode
 from zerver.lib.thumbnail import user_uploads_or_external
 from zerver.lib.timeout import timeout, TimeoutExpired
@@ -308,7 +310,7 @@ def walk_tree_with_family(root: Element,
         currElementPair = queue.popleft()
         for child in currElementPair.value.getchildren():
             if child.getchildren():
-                queue.append(ElementPair(parent=currElementPair, value=child))  # type: ignore  # Lack of Deque support in typing module for Python <=3.5.3
+                queue.append(ElementPair(parent=currElementPair, value=child))
             result = processor(child)
             if result is not None:
                 if currElementPair.parent is not None:
@@ -1165,13 +1167,11 @@ def possible_avatar_emails(content: str) -> Set[str]:
 
     return emails
 
-path_to_name_to_codepoint = os.path.join(settings.STATIC_ROOT,
-                                         "generated", "emoji", "name_to_codepoint.json")
+path_to_name_to_codepoint = static_path("generated/emoji/name_to_codepoint.json")
 with open(path_to_name_to_codepoint) as name_to_codepoint_file:
     name_to_codepoint = ujson.load(name_to_codepoint_file)
 
-path_to_codepoint_to_name = os.path.join(settings.STATIC_ROOT,
-                                         "generated", "emoji", "codepoint_to_name.json")
+path_to_codepoint_to_name = static_path("generated/emoji/codepoint_to_name.json")
 with open(path_to_codepoint_to_name) as codepoint_to_name_file:
     codepoint_to_name = ujson.load(codepoint_to_name_file)
 
@@ -1421,23 +1421,23 @@ class AutoLink(CompiledPattern):
         db_data = self.markdown.zulip_db_data
         return url_to_a(db_data, url)
 
-class UListProcessor(markdown.blockprocessors.UListProcessor):
-    """ Process unordered list blocks.
-
-        Based on markdown.blockprocessors.UListProcessor, but does not accept
-        '+' or '-' as a bullet character."""
-
-    TAG = 'ul'
-    RE = re.compile('^[ ]{0,3}[*][ ]+(.*)')
-
+class OListProcessor(sane_lists.SaneOListProcessor):
     def __init__(self, parser: Any) -> None:
-
-        # HACK: Set the tab length to 2 just for the initialization of
-        # this class, so that bulleted lists (and only bulleted lists)
-        # work off 2-space indentation.
         parser.markdown.tab_length = 2
         super().__init__(parser)
         parser.markdown.tab_length = 4
+
+class UListProcessor(sane_lists.SaneUListProcessor):
+    """ Does not accept '+' or '-' as a bullet character. """
+
+    def __init__(self, parser: Any) -> None:
+        parser.markdown.tab_length = 2
+        super().__init__(parser)
+        parser.markdown.tab_length = 4
+
+        self.RE = re.compile('^[ ]{0,%d}[*][ ]+(.*)' % (self.tab_length - 1,))
+        self.CHILD_RE = re.compile(r'^[ ]{0,%d}(([*]))[ ]+(.*)' %
+                                   (self.tab_length - 1,))
 
 class ListIndentProcessor(markdown.blockprocessors.ListIndentProcessor):
     """ Process unordered list blocks.
@@ -1453,6 +1453,16 @@ class ListIndentProcessor(markdown.blockprocessors.ListIndentProcessor):
         parser.markdown.tab_length = 2
         super().__init__(parser)
         parser.markdown.tab_length = 4
+
+class HashHeaderProcessor(markdown.blockprocessors.HashHeaderProcessor):
+    """ Process Hash Headers.
+
+        Based on markdown.blockprocessors.HashHeaderProcessor, but requires space for heading.
+    """
+
+    # Original regex for hashheader is
+    # RE = re.compile(r'(?:^|\n)(?P<level>#{1,6})(?P<header>(?:\\.|[^\\])*?)#*(?:\n|$)')
+    RE = re.compile(r'(?:^|\n)(?P<level>#{1,6})\s(?P<header>(?:\\.|[^\\])*?)#*(?:\n|$)')
 
 class BlockQuoteProcessor(markdown.blockprocessors.BlockQuoteProcessor):
     """ Process BlockQuotes.
@@ -1472,21 +1482,20 @@ class BlockQuoteProcessor(markdown.blockprocessors.BlockQuoteProcessor):
         # And then run the upstream processor's code for removing the '>'
         return super().clean(line)
 
-class BugdownUListPreprocessor(markdown.preprocessors.Preprocessor):
-    """ Allows unordered list blocks that come directly after a
-        paragraph to be rendered as an unordered list
+class BugdownListPreprocessor(markdown.preprocessors.Preprocessor):
+    """ Allows list blocks that come directly after another block
+        to be rendered as a list.
 
         Detects paragraphs that have a matching list item that comes
         directly after a line of text, and inserts a newline between
         to satisfy Markdown"""
 
-    LI_RE = re.compile('^[ ]{0,3}[*][ ]+(.*)', re.MULTILINE)
-    HANGING_ULIST_RE = re.compile('^.+\\n([ ]{0,3}[*][ ]+.*)', re.MULTILINE)
+    LI_RE = re.compile(r'^[ ]{0,3}(\*|\d\.)[ ]+(.*)', re.MULTILINE)
 
     def run(self, lines: List[str]) -> List[str]:
         """ Insert a newline between a paragraph and ulist if missing """
         inserts = 0
-        fence = None
+        fence = None  # type: Optional[Match.group]
         copy = lines[:]
         for i in range(len(lines) - 1):
             # Ignore anything that is inside a fenced code block
@@ -1499,122 +1508,27 @@ class BugdownUListPreprocessor(markdown.preprocessors.Preprocessor):
                 fence = None
 
             # If we're not in a fenced block and we detect an upcoming list
-            #  hanging off a paragraph, add a newline
-            if (not fence and lines[i] and
-                self.LI_RE.match(lines[i+1]) and
-                    not self.LI_RE.match(lines[i])):
-
-                copy.insert(i+inserts+1, '')
-                inserts += 1
+            # hanging off any block (including a list of another type), add
+            # a newline.
+            li1 = self.LI_RE.match(lines[i])
+            li2 = self.LI_RE.match(lines[i+1])
+            if not fence and lines[i]:
+                if (li2 and not li1) or (li1 and li2 and
+                                         (len(li1.group(1)) == 1) != (len(li2.group(1)) == 1)):
+                    copy.insert(i+inserts+1, '')
+                    inserts += 1
         return copy
 
-class AutoNumberOListPreprocessor(markdown.preprocessors.Preprocessor):
-    """ Finds a sequence of lines numbered by the same number"""
-    RE = re.compile(r'^([ ]*)(\d+)\.[ ]+(.*)')
-    TAB_LENGTH = 2
-
-    def run(self, lines: List[str]) -> List[str]:
-        new_lines = []  # type: List[str]
-        current_list = []  # type: List[Match[str]]
-        current_indent = 0
-
-        for line in lines:
-            m = self.RE.match(line)
-
-            # Remember if this line is a continuation of already started list
-            is_next_item = (m and current_list
-                            and current_indent == len(m.group(1)) // self.TAB_LENGTH)
-
-            is_blank_line = line.strip() == ""
-
-            if not is_next_item and not is_blank_line:
-                # This is a non-blank line that doesn't start with a
-                # bullet, so we're done with the previous numbered
-                # list and can start a new one.
-                new_lines.extend(self.renumber(current_list))
-                current_list = []
-
-            if not m:
-                # This line doesn't start with a bullet.  If it's not
-                # between bullets of a list (i.e. `current_list =
-                # []`), this is just normal content outside a bulleted
-                # list and we can append it to `new_lines`.
-                if not current_list:
-                    # Ordinary line
-                    new_lines.append(line)
-
-                # Otherwise, it's a blank line in between bullets,
-                # because if this was a bullet, `m` would be truthy,
-                # and if it wasn't blank, we could have terminated the
-                # list (see above).  We can just skip this blank line
-                # syntax, as our bulleted list CSS styling will
-                # control vertical spacing between bullets.
-            elif is_next_item:
-                # Another list item
-                current_list.append(m)
-            else:
-                # First list item
-                current_list = [m]
-                current_indent = len(m.group(1)) // self.TAB_LENGTH
-
-        new_lines.extend(self.renumber(current_list))
-
-        return new_lines
-
-    def renumber(self, mlist: List[Match[str]]) -> List[str]:
-        if not mlist:
-            return []
-
-        start_number = int(mlist[0].group(2))
-
-        # Change numbers only if every one is the same
-        change_numbers = True
-        for m in mlist:
-            if int(m.group(2)) != start_number:
-                change_numbers = False
-                break
-
-        lines = []  # type: List[str]
-        counter = start_number
-
-        for m in mlist:
-            number = str(counter) if change_numbers else m.group(2)
-            lines.append('%s%s. %s' % (m.group(1), number, m.group(3)))
-            counter += 1
-
-        return lines
-
-# We need the following since upgrade from py-markdown 2.6.11 to 3.0.1
-# modifies the link handling significantly. The following is taken from
-# py-markdown 2.6.11 markdown/inlinepatterns.py.
-@one_time
-def get_link_re() -> str:
-    '''
-    Very important--if you need to change this code to depend on
-    any arguments, you must eliminate the "one_time" decorator
-    and consider performance implications.  We only want to compute
-    this value once.
-    '''
-
-    NOBRACKET = r'[^\]\[]*'
-    BRK = (
-        r'\[(' +
-        (NOBRACKET + r'(\[')*6 +
-        (NOBRACKET + r'\])*')*6 +
-        NOBRACKET + r')\]'
-    )
-    NOIMG = r'(?<!\!)'
-
-    # [text](url) or [text](<url>) or [text](url "title")
-    LINK_RE = NOIMG + BRK + \
-        r'''\(\s*(<.*?>|((?:(?:\(.*?\))|[^\(\)]))*?)\s*((['"])(.*?)\12\s*)?\)'''
-    return normal_compile(LINK_RE)
-
+# Name for the outer capture group we use to separate whitespace and
+# other delimiters from the actual content.  This value won't be an
+# option in user-entered capture groups.
+OUTER_CAPTURE_GROUP = "linkifier_actual_match"
 def prepare_realm_pattern(source: str) -> str:
-    """ Augment a realm filter so it only matches after start-of-string,
+    """Augment a realm filter so it only matches after start-of-string,
     whitespace, or opening delimiters, won't match if there are word
-    characters directly after, and saves what was matched as "name". """
-    return r"""(?<![^\s'"\(,:<])(?P<name>""" + source + r')(?!\w)'
+    characters directly after, and saves what was matched as
+    OUTER_CAPTURE_GROUP."""
+    return r"""(?<![^\s'"\(,:<])(?P<%s>%s)(?!\w)""" % (OUTER_CAPTURE_GROUP, source)
 
 # Given a regular expression pattern, linkifies groups that match it
 # using the provided format string to construct the URL.
@@ -1632,7 +1546,7 @@ class RealmFilterPattern(markdown.inlinepatterns.Pattern):
         db_data = self.markdown.zulip_db_data
         return url_to_a(db_data,
                         self.format_string % m.groupdict(),
-                        m.group("name"))
+                        m.group(OUTER_CAPTURE_GROUP))
 
 class UserMentionPattern(markdown.inlinepatterns.Pattern):
     def handleMatch(self, m: Match[str]) -> Optional[Element]:
@@ -1801,37 +1715,39 @@ class AlertWordsNotificationProcessor(markdown.preprocessors.Preprocessor):
                         self.markdown.zulip_message.user_ids_with_alert_words.update(user_ids)
         return lines
 
-# This prevents realm_filters from running on the content of a
-# Markdown link, breaking up the link.  This is a monkey-patch, but it
-# might be worth sending a version of this change upstream.
-class AtomicLinkPattern(CompiledPattern):
-    def get_element(self, m: Match[str]) -> Optional[Element]:
-        href = m.group(9)
-        if not href:
-            return None
+class LinkInlineProcessor(markdown.inlinepatterns.LinkInlineProcessor):
+    def zulip_specific_link_changes(self, el: Element) -> Union[None, Element]:
+        href = el.get('href')
 
-        if href[0] == "<":
-            href = href[1:-1]
+        # Sanitize url or don't parse link. See linkify_tests in markdown_test_cases for banned syntax.
         href = sanitize_url(self.unescape(href.strip()))
         if href is None:
-            return None
+            return None  # no-op; the link is not processed.
 
+        # Rewrite local links to be relative
         db_data = self.markdown.zulip_db_data
         href = rewrite_local_links_to_relative(db_data, href)
 
-        el = markdown.util.etree.Element('a')
-        el.text = m.group(2)
-        el.set('href', href)
+        # Make changes to <a> tag attributes
+        el.set("href", href)
         fixup_link(el, target_blank=(href[:1] != '#'))
+
+        # Show link href if title is empty
+        if not el.text.strip():
+            el.text = href
+
+        # Prevent realm_filters from running on the content of a Markdown link, breaking up the link.
+        # This is a monkey-patch, but it might be worth sending a version of this change upstream.
+        if not isinstance(el, str):
+            el.text = markdown.util.AtomicString(el.text)
+
         return el
 
-    def handleMatch(self, m: Match[str]) -> Optional[Element]:
-        ret = self.get_element(m)
-        if ret is None:
-            return None
-        if not isinstance(ret, str):
-            ret.text = markdown.util.AtomicString(ret.text)
-        return ret
+    def handleMatch(self, m: Match[str], data: str) -> Tuple[Union[None, Element], int, int]:
+        el, match_start, index = super().handleMatch(m, data)
+        if el is not None:
+            el = self.zulip_specific_link_changes(el)
+        return el, match_start, index
 
 def get_sub_registry(r: markdown.util.Registry, keys: List[str]) -> markdown.util.Registry:
     # Registry is a new class added by py-markdown to replace Ordered List.
@@ -1883,8 +1799,7 @@ class Bugdown(markdown.Markdown):
         # html_block - insecure
         # reference - references don't make sense in a chat context.
         preprocessors = markdown.util.Registry()
-        preprocessors.register(AutoNumberOListPreprocessor(self), 'auto_number_olist', 40)
-        preprocessors.register(BugdownUListPreprocessor(self), 'hanging_ulists', 35)
+        preprocessors.register(BugdownListPreprocessor(self), 'hanging_lists', 35)
         preprocessors.register(markdown.preprocessors.NormalizeWhitespace(self), 'normalize_whitespace', 30)
         preprocessors.register(fenced_code.FencedBlockPreprocessor(self), 'fenced_code_block', 25)
         preprocessors.register(AlertWordsNotificationProcessor(self), 'custom_text_notifications', 20)
@@ -1903,8 +1818,10 @@ class Bugdown(markdown.Markdown):
         parser.blockprocessors.register(markdown.blockprocessors.EmptyBlockProcessor(parser), 'empty', 85)
         if not self.getConfig('code_block_processor_disabled'):
             parser.blockprocessors.register(markdown.blockprocessors.CodeBlockProcessor(parser), 'code', 80)
+        parser.blockprocessors.register(HashHeaderProcessor(parser), 'hashheader', 78)
         # We get priority 75 from 'table' extension
         parser.blockprocessors.register(markdown.blockprocessors.HRProcessor(parser), 'hr', 70)
+        parser.blockprocessors.register(OListProcessor(parser), 'olist', 68)
         parser.blockprocessors.register(UListProcessor(parser), 'ulist', 65)
         parser.blockprocessors.register(ListIndentProcessor(parser), 'indent', 60)
         parser.blockprocessors.register(BlockQuoteProcessor(parser), 'quote', 55)
@@ -1958,7 +1875,7 @@ class Bugdown(markdown.Markdown):
         # Note that !gravatar syntax should be deprecated long term.
         reg.register(Avatar(GRAVATAR_REGEX, self), 'gravatar', 70)
         reg.register(UserGroupMentionPattern(mention.user_group_mentions, self), 'usergroupmention', 65)
-        reg.register(AtomicLinkPattern(get_link_re(), self), 'link', 60)
+        reg.register(LinkInlineProcessor(markdown.inlinepatterns.LINK_RE, self), 'link', 60)
         reg.register(AutoLink(get_web_link_regex(), self), 'autolink', 55)
         # Reserve priority 45-54 for Realm Filters
         reg = self.register_realm_filters(reg)
@@ -2074,7 +1991,11 @@ def topic_links(realm_filters_key: int, topic_name: str) -> List[str]:
     for sub_string in basic_link_splitter.split(topic_name):
         link_match = re.match(get_web_link_regex(), sub_string)
         if link_match:
-            matches.append(link_match.group('url'))
+            url = link_match.group('url')
+            url_object = parse(url)
+            if not url_object.scheme:
+                url = url_object.replace(scheme='https').to_text()
+            matches.append(url)
 
     return matches
 

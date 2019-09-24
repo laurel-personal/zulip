@@ -55,7 +55,7 @@ page can be easily identified in it's respective JavaScript file -->
                                 {{ csrf_input }}
 
                                 <div class="input-box no-validate">
-                                    <input type="email" id="email" class="email" name="email" value="" required />
+                                    <input type="email" id="email" class="email" name="email" value="" autofocus required />
                                     <label for="email">Email</label>
                                     <div class="alert alert-error email-frontend-error"></div>
                                     {% if form.email.errors %}
@@ -68,21 +68,9 @@ page can be easily identified in it's respective JavaScript file -->
                                 <button class="full-width" type="submit">{{ _('Sign up') }}</button>
                             </form>
 
-                            {% if any_oauth_backend_enabled %}
+                            {% if any_social_backend_enabled %}
                             <div class="or"><span>{{ _('OR') }}</span></div>
                             {% endif %}
-                        {% endif %}
-
-                        {% if google_auth_enabled %}
-                        <div class="login-social">
-                            <form class="form-inline" action="{{ url('zerver.views.auth.start_google_oauth2') }}" method="get">
-                                <input type='hidden' name='is_signup' value='1' />
-                                <input type='hidden' name='multiuse_object_key' value='{{ multiuse_object_key }}' />
-                                <button class="login-social-button login-google-button full-width">
-                                    {{ _('Sign up with %(identity_provider)s', identity_provider="Google") }}
-                                </button>
-                            </form>
-                        </div>
                         {% endif %}
 
                         {% for backend in social_backends %}

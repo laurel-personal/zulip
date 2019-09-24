@@ -67,7 +67,6 @@ not_yet_fully_covered = {path for target in [
     'zerver/lib/i18n.py',
     'zerver/lib/email_notifications.py',
     'zerver/lib/send_email.py',
-    'zerver/lib/webhooks/common.py',
     'zerver/lib/url_preview/preview.py',
     'zerver/worker/queue_processors.py',
     # Bugdown sub-libs should have full coverage too; a lot are really close
@@ -110,7 +109,7 @@ not_yet_fully_covered = {path for target in [
     'zerver/lib/generate_test_data.py',
     'zerver/lib/test_fixtures.py',
     'zerver/lib/test_runner.py',
-    'zerver/lib/api_test_helpers.py',
+    'zerver/openapi/python_examples.py',
     # Tornado should ideally have full coverage, but we're not there.
     'zerver/tornado/autoreload.py',
     'zerver/tornado/descriptors.py',
@@ -124,6 +123,7 @@ not_yet_fully_covered = {path for target in [
     'zerver/tornado/websocket_client.py',
     # Data import files; relatively low priority
     'zerver/data_import/hipchat*.py',
+    'zerver/data_import/mattermost.py',
     'zerver/data_import/sequencer.py',
     'zerver/data_import/slack.py',
     'zerver/data_import/gitter.py',

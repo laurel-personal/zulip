@@ -1,9 +1,11 @@
+var autosize = require('autosize');
+
 var compose_ui = (function () {
 
 var exports = {};
 
 exports.autosize_textarea = function () {
-    $("#compose-textarea").trigger("autosize.resize");
+    autosize.update($("#compose-textarea"));
 };
 
 exports.smart_insert = function (textarea, syntax) {
@@ -42,7 +44,7 @@ exports.smart_insert = function (textarea, syntax) {
 
     // This should just call exports.autosize_textarea, but it's a bit
     // annoying for the unit tests, so we don't do that.
-    textarea.trigger("autosize.resize");
+    autosize.update(textarea);
 };
 
 exports.insert_syntax_and_focus = function (syntax, textarea) {
@@ -72,6 +74,46 @@ exports.replace_syntax = function (old_syntax, new_syntax, textarea) {
         // for details.
         return new_syntax;
     }));
+};
+
+exports.compute_placeholder_text = function (opts) {
+    // Computes clear placeholder text for the compose box, depending
+    // on what heading values have already been filled out.
+    //
+    // We return text with the stream and topic name unescaped,
+    // because the caller is expected to insert this into the
+    // placeholder field in a way that does HTML escaping.
+    if (opts.message_type === 'stream') {
+        if (opts.topic) {
+            return i18n.t("Message #__- stream_name__ > __- topic_name__",
+                          {stream_name: opts.stream,
+                           topic_name: opts.topic});
+        } else if (opts.stream) {
+            return i18n.t("Message #__- stream_name__", {stream_name: opts.stream});
+        }
+    }
+
+    // For Private Messages
+    if (opts.private_message_recipient) {
+        var recipient_list = opts.private_message_recipient.split(",");
+        var recipient_names = _.map(recipient_list, (recipient) => {
+            var user = people.get_by_email(recipient);
+            return user.full_name;
+        }).join(", ");
+
+        if (recipient_list.length === 1) {
+            // If it's a single user, display status text if available
+            var user = people.get_by_email(recipient_list[0]);
+            var status = user_status.get_status_text(user.user_id);
+            if (status) {
+                return i18n.t("Message __- recipient_name__ (__- recipient_status__)",
+                              {recipient_name: recipient_names,
+                               recipient_status: status});
+            }
+        }
+        return i18n.t("Message __- recipient_names__", {recipient_names: recipient_names});
+    }
+    return i18n.t("Compose your message here");
 };
 
 return exports;

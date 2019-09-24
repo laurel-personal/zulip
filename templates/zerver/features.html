@@ -4,7 +4,7 @@
 {% set OPEN_GRAPH_DESCRIPTION = 'First class threading on top of everything you could want from real-time chat.' %}
 
 {% block customhead %}
-{{ render_bundle('landing-page') }}
+{{ bundle('landing-page') }}
 {% endblock %}
 
 {% block portico_content %}
@@ -173,7 +173,7 @@
             <p>Zulip has a powerful set of analytics available to
             help you see how your organization communicates.</p>
         </a>
-        <a class="feature-block" href="http://localhost:9991/help/private-messages" target="_blank">
+        <a class="feature-block" href="/help/private-messages" target="_blank">
             <h3>ONE-ON-ONE AND GROUP PRIVATE CONVERSATIONS</h3>
             <p>Lightweight private conversations with one or as many people as you need.</p>
         </a>
@@ -282,6 +282,13 @@
             <h3>MODERATION</h3>
             <p>
                 A full suite of tools for moderating open communities.
+            </p>
+        </a>
+        <a class="feature-block" href="/help/export-your-organization" target="_blank">
+            <h3>DATA EXPORTS</h3>
+            <p>
+                No vendor lock-in. Export your hosted Zulip to an
+                on-premises installation at any time.
             </p>
         </a>
         <a class="feature-block" href="https://github.com/zulip/zulip/" target="_blank">

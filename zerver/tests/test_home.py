@@ -1,5 +1,5 @@
 import datetime
-import re
+import lxml.html
 import ujson
 
 from django.http import HttpResponse
@@ -13,15 +13,16 @@ from zerver.lib.actions import do_change_logo_source
 from zerver.lib.events import add_realm_logo_fields
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import (
-    HostRequestMock, queries_captured, get_user_messages
+    queries_captured, get_user_messages
 )
 from zerver.lib.soft_deactivation import do_soft_deactivate_users
 from zerver.lib.test_runner import slow
 from zerver.models import (
     get_realm, get_stream, get_user, UserProfile,
     flush_per_request_caches, DefaultStream, Realm,
+    get_system_bot,
 )
-from zerver.views.home import home, sent_time_in_epoch_seconds, compute_navbar_logo_url
+from zerver.views.home import sent_time_in_epoch_seconds, compute_navbar_logo_url
 from corporate.models import Customer, CustomerPlan
 
 class HomeTest(ZulipTestCase):
@@ -40,7 +41,7 @@ class HomeTest(ZulipTestCase):
             'Welcome to Zulip',
             # Verify that the app styles get included
             'app-stubentry.js',
-            'var page_params',
+            'data-params',
         ]
 
         # Keep this list sorted!!!
@@ -150,6 +151,7 @@ class HomeTest(ZulipTestCase):
             "realm_google_hangouts_domain",
             "realm_icon_source",
             "realm_icon_url",
+            "realm_incoming_webhook_bots",
             "realm_inline_image_preview",
             "realm_inline_url_embed_preview",
             "realm_invite_by_admins_only",
@@ -351,10 +353,9 @@ class HomeTest(ZulipTestCase):
         return result
 
     def _get_page_params(self, result: HttpResponse) -> Dict[str, Any]:
-        html = result.content.decode('utf-8')
-        lines = html.split('\n')
-        page_params_line = [l for l in lines if re.match(r'^\s*var page_params', l)][0]
-        page_params_json = page_params_line.split(' = ')[1].rstrip(';')
+        doc = lxml.html.document_fromstring(result.content)
+        [div] = doc.xpath("//div[@id='page-params']")
+        page_params_json = div.get("data-params")
         page_params = ujson.loads(page_params_json)
         return page_params
 
@@ -559,7 +560,7 @@ class HomeTest(ZulipTestCase):
         self.assertNotIn('defunct-1@zulip.com', active_emails)
 
         cross_bots = page_params['cross_realm_bots']
-        self.assertEqual(len(cross_bots), 5)
+        self.assertEqual(len(cross_bots), 4)
         cross_bots.sort(key=lambda d: d['email'])
         for cross_bot in cross_bots:
             # These are either nondeterministic or boring
@@ -573,21 +574,14 @@ class HomeTest(ZulipTestCase):
 
         self.assertEqual(sorted(cross_bots, key=by_email), sorted([
             dict(
-                user_id=get_user('new-user-bot@zulip.com', get_realm('zulip')).id,
-                is_admin=False,
-                email='new-user-bot@zulip.com',
-                full_name='Zulip New User Bot',
-                is_bot=True
-            ),
-            dict(
-                user_id=get_user('emailgateway@zulip.com', get_realm('zulip')).id,
+                user_id=get_system_bot('emailgateway@zulip.com').id,
                 is_admin=False,
                 email='emailgateway@zulip.com',
                 full_name='Email Gateway',
                 is_bot=True
             ),
             dict(
-                user_id=get_user('feedback@zulip.com', get_realm('zulip')).id,
+                user_id=get_system_bot('feedback@zulip.com').id,
                 is_admin=False,
                 email='feedback@zulip.com',
                 full_name='Zulip Feedback Bot',
@@ -601,7 +595,7 @@ class HomeTest(ZulipTestCase):
                 is_bot=True
             ),
             dict(
-                user_id=get_user('welcome-bot@zulip.com', get_realm('zulip')).id,
+                user_id=get_system_bot('welcome-bot@zulip.com').id,
                 is_admin=False,
                 email='welcome-bot@zulip.com',
                 full_name='Welcome Bot',
@@ -755,23 +749,23 @@ class HomeTest(ZulipTestCase):
         page_params = {"night_mode": True}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/logo.png?version=2")
+                         "/user_avatars/%s/realm/logo.png?version=2" % (user_profile.realm_id,))
 
         page_params = {"night_mode": False}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/logo.png?version=2")
+                         "/user_avatars/%s/realm/logo.png?version=2" % (user_profile.realm_id,))
 
         do_change_logo_source(user_profile.realm, Realm.LOGO_UPLOADED, night=True)
         page_params = {"night_mode": True}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/night_logo.png?version=2")
+                         "/user_avatars/%s/realm/night_logo.png?version=2" % (user_profile.realm_id,))
 
         page_params = {"night_mode": False}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/logo.png?version=2")
+                         "/user_avatars/%s/realm/logo.png?version=2" % (user_profile.realm_id,))
 
         # This configuration isn't super supported in the UI and is a
         # weird choice, but we have a test for it anyway.
@@ -779,7 +773,7 @@ class HomeTest(ZulipTestCase):
         page_params = {"night_mode": True}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/night_logo.png?version=2")
+                         "/user_avatars/%s/realm/night_logo.png?version=2" % (user_profile.realm_id,))
 
         page_params = {"night_mode": False}
         add_realm_logo_fields(page_params, user_profile.realm)
@@ -798,14 +792,6 @@ class HomeTest(ZulipTestCase):
         user_message = MagicMock()
         user_message.message.pub_date = pub_date
         self.assertEqual(sent_time_in_epoch_seconds(user_message), epoch_seconds)
-
-    def test_handlebars_compile_error(self) -> None:
-        request = HostRequestMock()
-        with self.settings(DEVELOPMENT=True, TEST_SUITE=False):
-            with patch('os.path.exists', return_value=True):
-                result = home(request)
-        self.assertEqual(result.status_code, 500)
-        self.assert_in_response('Error compiling handlebars templates.', result)
 
     def test_subdomain_homepage(self) -> None:
         email = self.example_email("hamlet")

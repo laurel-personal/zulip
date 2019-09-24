@@ -1,4 +1,3 @@
-
 from django.utils.timezone import now as timezone_now
 
 from zerver.lib.actions import do_create_user, do_deactivate_user, \
@@ -52,7 +51,7 @@ class TestRealmAuditLog(ZulipTestCase):
 
         # Test the RealmAuditLog stringification
         audit_entry = RealmAuditLog.objects.get(event_type=RealmAuditLog.USER_EMAIL_CHANGED, event_time__gte=now)
-        self.assertTrue(str(audit_entry).startswith("<RealmAuditLog: <UserProfile: test@example.com <Realm: zulip 1>> user_email_changed "))
+        self.assertTrue(str(audit_entry).startswith("<RealmAuditLog: <UserProfile: test@example.com %s> user_email_changed " % (user.realm,)))
 
     def test_change_avatar_source(self) -> None:
         now = timezone_now()

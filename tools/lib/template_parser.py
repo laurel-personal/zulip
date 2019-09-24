@@ -214,7 +214,8 @@ def validate(fn=None, text=None, check_indent=True):
         fn = '<in memory file>'
 
     if text is None:
-        text = open(fn).read()
+        with open(fn, 'r') as f:
+            text = f.read()
 
     tokens = tokenize(text)
 
@@ -335,6 +336,7 @@ def is_django_block_tag(tag):
         'for',
         'if',
         'ifequal',
+        'macro',
         'verbatim',
         'blocktrans',
         'trans',

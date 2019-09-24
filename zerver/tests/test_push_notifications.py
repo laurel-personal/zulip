@@ -1,4 +1,3 @@
-
 from contextlib import contextmanager
 import datetime
 import itertools
@@ -32,6 +31,7 @@ from zerver.models import (
     receives_stream_notifications,
     get_client,
     get_realm,
+    get_stream,
     Recipient,
     Stream,
     Subscription,
@@ -137,7 +137,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
         result = self.api_post(self.example_email("hamlet"), endpoint, {'token': token,
                                                                         'user_id': 15,
                                                                         'token_kind': token_kind},
-                               realm="")
+                               subdomain="")
         self.assert_json_error(result, "Must validate with valid Zulip server API key")
 
     def test_register_remote_push_user_paramas(self) -> None:
@@ -402,8 +402,9 @@ class AnalyticsBouncerTest(BouncerTestCase):
         self.assertEqual(RealmCount.objects.count(), 1)
 
         self.assertEqual(RemoteRealmCount.objects.count(), 0)
-        with self.assertRaises(JsonableError):
+        with mock.patch('zerver.lib.remote_server.logging.warning') as log_warning:
             send_analytics_to_remote_server()
+            log_warning.assert_called_once()
         self.assertEqual(RemoteRealmCount.objects.count(), 0)
 
 class PushNotificationTest(BouncerTestCase):
@@ -972,8 +973,8 @@ class TestGetAPNsPayload(PushNotificationTest):
     def test_get_message_payload_apns_personal_message(self) -> None:
         user_profile = self.example_user("othello")
         message_id = self.send_personal_message(
-            self.example_email('hamlet'),
-            self.example_email('othello'),
+            self.sender.email,
+            user_profile.email,
             'Content of personal message',
         )
         message = Message.objects.get(id=message_id)
@@ -991,11 +992,11 @@ class TestGetAPNsPayload(PushNotificationTest):
                 'zulip': {
                     'message_ids': [message.id],
                     'recipient_type': 'private',
-                    'sender_email': 'hamlet@zulip.com',
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
                     "user_id": user_profile.id,
                 }
             }
@@ -1027,11 +1028,11 @@ class TestGetAPNsPayload(PushNotificationTest):
                         str(s.user_profile_id)
                         for s in Subscription.objects.filter(
                             recipient=message.recipient)),
-                    'sender_email': 'hamlet@zulip.com',
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
                     "user_id": user_profile.id,
                 }
             }
@@ -1059,13 +1060,13 @@ class TestGetAPNsPayload(PushNotificationTest):
                 'zulip': {
                     'message_ids': [message.id],
                     'recipient_type': 'stream',
-                    'sender_email': 'hamlet@zulip.com',
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     "stream": get_display_recipient(message.recipient),
                     "topic": message.topic_name(),
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
                     "user_id": user_profile.id,
                 }
             }
@@ -1092,13 +1093,46 @@ class TestGetAPNsPayload(PushNotificationTest):
                 'zulip': {
                     'message_ids': [message.id],
                     'recipient_type': 'stream',
-                    'sender_email': 'hamlet@zulip.com',
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     "stream": get_display_recipient(message.recipient),
                     "topic": message.topic_name(),
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
+                    "user_id": user_profile.id,
+                }
+            }
+        }
+        self.assertDictEqual(payload, expected)
+
+    def test_get_message_payload_apns_stream_wildcard_mention(self):
+        # type: () -> None
+        user_profile = self.example_user("othello")
+        stream = Stream.objects.filter(name='Verona').get()
+        message = self.get_message(Recipient.STREAM, stream.id)
+        message.trigger = 'wildcard_mentioned'
+        message.stream_name = 'Verona'
+        payload = get_message_payload_apns(user_profile, message)
+        expected = {
+            'alert': {
+                'title': '#Verona > Test Topic',
+                'subtitle': 'King Hamlet mentioned everyone:',
+                'body': message.content,
+            },
+            'sound': 'default',
+            'badge': 0,
+            'custom': {
+                'zulip': {
+                    'message_ids': [message.id],
+                    'recipient_type': 'stream',
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
+                    "stream": get_display_recipient(message.recipient),
+                    "topic": message.topic_name(),
+                    'server': settings.EXTERNAL_HOST,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
                     "user_id": user_profile.id,
                 }
             }
@@ -1130,11 +1164,11 @@ class TestGetAPNsPayload(PushNotificationTest):
                         str(s.user_profile_id)
                         for s in Subscription.objects.filter(
                             recipient=message.recipient)),
-                    'sender_email': self.example_email("hamlet"),
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
                     "user_id": user_profile.id,
                 }
             }
@@ -1560,13 +1594,13 @@ class TestClearOnRead(ZulipTestCase):
         hamlet.save()
         stream = self.subscribe(hamlet, "Denmark")
 
-        msgids = [self.send_stream_message(self.example_email("iago"),
-                                           stream.name,
-                                           "yo {}".format(i))
-                  for i in range(n_msgs)]
+        message_ids = [self.send_stream_message(self.example_email("iago"),
+                                                stream.name,
+                                                "yo {}".format(i))
+                       for i in range(n_msgs)]
         UserMessage.objects.filter(
             user_profile_id=hamlet.id,
-            message_id__in=msgids,
+            message_id__in=message_ids,
         ).update(
             flags=F('flags').bitor(
                 UserMessage.flags.active_mobile_push_notification))
@@ -1577,11 +1611,11 @@ class TestClearOnRead(ZulipTestCase):
             queue_items = [c[0][1] for c in mock_publish.call_args_list]
             groups = [item['message_ids'] for item in queue_items]
 
-        self.assertEqual(len(groups), min(len(msgids), max_unbatched))
+        self.assertEqual(len(groups), min(len(message_ids), max_unbatched))
         for g in groups[:-1]:
             self.assertEqual(len(g), 1)
-        self.assertEqual(sum(len(g) for g in groups), len(msgids))
-        self.assertEqual(set(id for g in groups for id in g), set(msgids))
+        self.assertEqual(sum(len(g) for g in groups), len(message_ids))
+        self.assertEqual(set(id for g in groups for id in g), set(message_ids))
 
 class TestReceivesNotificationsFunctions(ZulipTestCase):
     def setUp(self) -> None:
@@ -1675,24 +1709,32 @@ class TestPushNotificationsContent(ZulipTestCase):
         tests = fixtures["regular_tests"]
         for test in tests:
             if "text_content" in test:
-                output = get_mobile_push_content(test["expected_output"])
-                self.assertEqual(output, test["text_content"])
+                with self.subTest(markdown_test_case=test["name"]):
+                    output = get_mobile_push_content(test["expected_output"])
+                    self.assertEqual(output, test["text_content"])
 
     def test_backend_only_fixtures(self) -> None:
+        realm = get_realm("zulip")
+        cordelia = self.example_user("cordelia")
+        stream = get_stream("Verona", realm)
+
         fixtures = [
             {
                 'name': 'realm_emoji',
-                'rendered_content': '<p>Testing <img alt=":green_tick:" class="emoji" src="/user_avatars/1/emoji/green_tick.png" title="green tick"> realm emoji.</p>',
+                'rendered_content': '<p>Testing <img alt=":green_tick:" class="emoji" src="/user_avatars/%s/emoji/green_tick.png" title="green tick"> realm emoji.</p>' % (
+                    realm.id,),
                 'expected_output': 'Testing :green_tick: realm emoji.',
             },
             {
                 'name': 'mentions',
-                'rendered_content': '<p>Mentioning <span class="user-mention" data-user-id="3">@Cordelia Lear</span>.</p>',
+                'rendered_content': '<p>Mentioning <span class="user-mention" data-user-id="%s">@Cordelia Lear</span>.</p>' % (
+                    cordelia.id,),
                 'expected_output': 'Mentioning @Cordelia Lear.',
             },
             {
                 'name': 'stream_names',
-                'rendered_content': '<p>Testing stream names <a class="stream" data-stream-id="5" href="/#narrow/stream/Verona">#Verona</a>.</p>',
+                'rendered_content': '<p>Testing stream names <a class="stream" data-stream-id="%s" href="/#narrow/stream/Verona">#Verona</a>.</p>' % (
+                    stream.id,),
                 'expected_output': 'Testing stream names #Verona.',
             },
         ]

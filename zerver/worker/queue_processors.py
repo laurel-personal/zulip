@@ -1,5 +1,5 @@
 # Documented in https://zulip.readthedocs.io/en/latest/subsystems/queuing.html
-from typing import Any, Callable, Dict, List, Mapping, Optional, cast, TypeVar, Type
+from typing import Any, Callable, Dict, List, Mapping, Optional, cast, Tuple, TypeVar, Type
 
 import copy
 import signal
@@ -28,7 +28,7 @@ from zerver.lib.push_notifications import handle_push_notification, handle_remov
     initialize_push_notifications
 from zerver.lib.actions import do_send_confirmation_email, \
     do_update_user_activity, do_update_user_activity_interval, do_update_user_presence, \
-    internal_send_message, internal_send_private_message, notify_export_completed, \
+    internal_send_message, internal_send_private_message, notify_realm_export, \
     render_incoming_message, do_update_embedded_data, do_mark_stream_messages_as_read
 from zerver.lib.url_preview import preview as url_preview
 from zerver.lib.digest import handle_digest_email
@@ -44,7 +44,7 @@ from zerver.lib.redis_utils import get_redis_client
 from zerver.context_processors import common_context
 from zerver.lib.outgoing_webhook import do_rest_call, get_outgoing_webhook_service_handler
 from zerver.models import get_bot_services, RealmAuditLog
-from zulip_bots.lib import extract_query_without_mention
+from zulip_bots.lib import ExternalBotHandler, extract_query_without_mention
 from zerver.lib.bot_lib import EmbeddedBotHandler, get_bot_handler, EmbeddedBotQuitException
 from zerver.lib.exceptions import RateLimited
 from zerver.lib.export import export_realm_wrapper
@@ -59,6 +59,7 @@ import datetime
 import logging
 import requests
 from io import StringIO
+import urllib
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,7 @@ class QueueProcessingWorker:
 
 class LoopQueueProcessingWorker(QueueProcessingWorker):
     sleep_delay = 0
+    sleep_only_if_empty = True
 
     def start(self) -> None:  # nocoverage
         while True:
@@ -171,7 +173,12 @@ class LoopQueueProcessingWorker(QueueProcessingWorker):
                 self.consume_batch(events)
             finally:
                 reset_queries()
-            time.sleep(self.sleep_delay)
+
+            # To avoid spinning the CPU, we go to sleep if there's
+            # nothing in the queue, or for certain queues with
+            # sleep_only_if_empty=False, unconditionally.
+            if not self.sleep_only_if_empty or len(events) == 0:
+                time.sleep(self.sleep_delay)
 
     def consume_batch(self, event: List[Dict[str, Any]]) -> None:
         raise NotImplementedError
@@ -221,32 +228,83 @@ class ConfirmationEmailWorker(QueueProcessingWorker):
         logger.info("Sending invitation for realm %s to %s" % (referrer.realm.string_id, invitee.email))
         do_send_confirmation_email(invitee, referrer)
 
-        # queue invitation reminder for two days from now.
-        link = create_confirmation_link(invitee, referrer.realm.host, Confirmation.INVITATION)
-        context = common_context(referrer)
-        context.update({
-            'activate_url': link,
-            'referrer_name': referrer.full_name,
-            'referrer_email': referrer.email,
-            'referrer_realm_name': referrer.realm.name,
-        })
-        send_future_email(
-            "zerver/emails/invitation_reminder",
-            referrer.realm,
-            to_emails=[invitee.email],
-            from_address=FromAddress.tokenized_no_reply_address(),
-            language=referrer.realm.default_language,
-            context=context,
-            delay=datetime.timedelta(days=2))
+        # queue invitation reminder
+        if settings.INVITATION_LINK_VALIDITY_DAYS >= 4:
+            link = create_confirmation_link(invitee, referrer.realm.host, Confirmation.INVITATION)
+            context = common_context(referrer)
+            context.update({
+                'activate_url': link,
+                'referrer_name': referrer.full_name,
+                'referrer_email': referrer.delivery_email,
+                'referrer_realm_name': referrer.realm.name,
+            })
+            send_future_email(
+                "zerver/emails/invitation_reminder",
+                referrer.realm,
+                to_emails=[invitee.email],
+                from_address=FromAddress.tokenized_no_reply_address(),
+                language=referrer.realm.default_language,
+                context=context,
+                delay=datetime.timedelta(days=settings.INVITATION_LINK_VALIDITY_DAYS - 2))
 
-@assign_queue('user_activity')
-class UserActivityWorker(QueueProcessingWorker):
-    def consume(self, event: Mapping[str, Any]) -> None:
-        user_profile = get_user_profile_by_id(event["user_profile_id"])
-        client = get_client(event["client"])
-        log_time = timestamp_to_datetime(event["time"])
-        query = event["query"]
-        do_update_user_activity(user_profile, client, query, log_time)
+@assign_queue('user_activity', queue_type="loop")
+class UserActivityWorker(LoopQueueProcessingWorker):
+    """The UserActivity queue is perhaps our highest-traffic queue, and
+    requires some care to ensure it performes adequately.
+
+    We use a LoopQueueProcessingWorker as a performance optimization
+    for managing the queue.  The structure of UserActivity records is
+    such that they are easily deduplicated before being sent to the
+    database; we take advantage of that to make this queue highly
+    effective at dealing with a backlog containing many similar
+    events.  Such a backlog happen in a few ways:
+
+    * In abuse/DoS situations, if a client is sending huge numbers of
+      similar requests to the server.
+    * If the queue ends up with several minutes of backlog e.g. due to
+      downtime of the queue processor, many clients will have several
+      common events from doing an action multiple times.
+
+    """
+    sleep_delay = 10
+    sleep_only_if_empty = True
+    client_id_map = {}  # type: Dict[str, int]
+
+    def start(self) -> None:
+        # For our unit tests to make sense, we need to clear this on startup.
+        self.client_id_map = {}
+        super().start()
+
+    def consume_batch(self, user_activity_events: List[Dict[str, Any]]) -> None:
+        uncommitted_events = {}  # type: Dict[Tuple[int, int, str], Tuple[int, float]]
+
+        # First, we drain the queue of all user_activity events and
+        # deduplicate them for insertion into the database.
+        for event in user_activity_events:
+            user_profile_id = event["user_profile_id"]
+
+            if event["client"] not in self.client_id_map:
+                client = get_client(event["client"])
+                self.client_id_map[event["client"]] = client.id
+            client_id = self.client_id_map[event["client"]]
+
+            key_tuple = (user_profile_id, client_id, event["query"])
+            if key_tuple not in uncommitted_events:
+                uncommitted_events[key_tuple] = (1, event['time'])
+            else:
+                count, time = uncommitted_events[key_tuple]
+                uncommitted_events[key_tuple] = (count + 1, max(time, event['time']))
+
+        # Then we insert the updates into the database.
+        #
+        # TODO: Doing these updates in sequence individually is likely
+        # inefficient; the idealized version would do some sort of
+        # bulk insert_or_update query.
+        for key_tuple in uncommitted_events:
+            (user_profile_id, client_id, query) = key_tuple
+            count, time = uncommitted_events[key_tuple]
+            log_time = timestamp_to_datetime(time)
+            do_update_user_activity(user_profile_id, client_id, query, count, log_time)
 
 @assign_queue('user_activity_interval')
 class UserActivityIntervalWorker(QueueProcessingWorker):
@@ -303,7 +361,7 @@ class MissedMessageWorker(QueueProcessingWorker):
         self.timer_event.start()
 
     def stop_timer(self) -> None:
-        if self.timer_event and self.timer_event.is_alive():  # type: ignore # Report mypy bug.
+        if self.timer_event and self.timer_event.is_alive():
             self.timer_event.cancel()
             self.timer_event = None
 
@@ -387,14 +445,14 @@ class ErrorReporter(QueueProcessingWorker):
 
 @assign_queue('slow_queries', queue_type="loop")
 class SlowQueryWorker(LoopQueueProcessingWorker):
-    # Sleep 1 minute between checking the queue
+    # Sleep 1 minute between checking the queue unconditionally,
+    # regardless of whether anything is in the queue.
     sleep_delay = 60 * 1
+    sleep_only_if_empty = False
 
-    # TODO: The type annotation here should be List[str], but that
-    # creates conflicts with other users in the file.
-    def consume_batch(self, slow_queries: List[Any]) -> None:
-        for query in slow_queries:
-            logging.info("Slow query: %s" % (query,))
+    def consume_batch(self, slow_query_events: List[Dict[str, Any]]) -> None:
+        for event in slow_query_events:
+            logging.info("Slow query: %s" % (event["query"],))
 
         if settings.SLOW_QUERY_LOGS_STREAM is None:
             return
@@ -402,12 +460,12 @@ class SlowQueryWorker(LoopQueueProcessingWorker):
         if settings.ERROR_BOT is None:
             return
 
-        if len(slow_queries) > 0:
+        if len(slow_query_events) > 0:
             topic = "%s: slow queries" % (settings.EXTERNAL_HOST,)
 
             content = ""
-            for query in slow_queries:
-                content += "    %s\n" % (query,)
+            for event in slow_query_events:
+                content += "    %s\n" % (event["query"],)
 
             error_bot_realm = get_system_bot(settings.ERROR_BOT).realm
             internal_send_message(error_bot_realm, settings.ERROR_BOT,
@@ -587,7 +645,7 @@ class EmbeddedBotWorker(QueueProcessingWorker):
                 if event['trigger'] == 'mention':
                     message['content'] = extract_query_without_mention(
                         message=message,
-                        client=self.get_bot_api_client(user_profile),
+                        client=cast(ExternalBotHandler, self.get_bot_api_client(user_profile)),
                     )
                     assert message['content'] is not None
                 bot_handler.handle_message(
@@ -611,7 +669,8 @@ class DeferredWorker(QueueProcessingWorker):
                 (stream, recipient, sub) = access_stream_by_id(user_profile, stream_id,
                                                                require_active=False)
                 do_mark_stream_messages_as_read(user_profile, client, stream)
-        elif event['type'] == 'realm_exported':
+        elif event['type'] == 'realm_export':
+            start = time.time()
             realm = Realm.objects.get(id=event['realm_id'])
             output_dir = tempfile.mkdtemp(prefix="zulip-export-")
 
@@ -620,9 +679,11 @@ class DeferredWorker(QueueProcessingWorker):
                                               delete_after_upload=True)
             assert public_url is not None
 
-            # TODO: This enables support for delete after access, and needs to be tested.
+            # Update the extra_data field now that the export is complete.
             export_event = RealmAuditLog.objects.get(id=event['id'])
-            export_event.extra_data = public_url
+            export_event.extra_data = ujson.dumps(dict(
+                export_path=urllib.parse.urlparse(public_url).path,
+            ))
             export_event.save(update_fields=['extra_data'])
 
             # Send a private message notification letting the user who
@@ -638,6 +699,7 @@ class DeferredWorker(QueueProcessingWorker):
             )
 
             # For future frontend use, also notify administrator
-            # clients that the export happened, including sending the
-            # url.
-            notify_export_completed(user_profile, public_url)
+            # clients that the export happened.
+            notify_realm_export(user_profile)
+            logging.info("Completed data export for %s in %s" % (
+                user_profile.realm.string_id, time.time() - start))

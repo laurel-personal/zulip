@@ -74,6 +74,7 @@ from zerver.lib.topic import (
     DB_TOPIC_NAME,
 )
 
+from zerver.lib.types import DisplayRecipientT, UserDisplayRecipient
 from zerver.lib.soft_deactivation import (
     add_missing_messages,
     do_soft_activate_users,
@@ -86,7 +87,9 @@ from zerver.models import (
     Message, Realm, Recipient, Stream, UserMessage, UserProfile, Attachment,
     RealmAuditLog, RealmDomain, get_realm, UserPresence, Subscription,
     get_stream, get_stream_recipient, get_system_bot, get_user, Reaction,
-    flush_per_request_caches, ScheduledMessage, get_huddle_recipient
+    flush_per_request_caches, ScheduledMessage, get_huddle_recipient,
+    bulk_get_huddle_user_ids, get_huddle_user_ids,
+    get_personal_recipient, get_display_recipient
 )
 
 
@@ -104,7 +107,7 @@ import datetime
 import mock
 import time
 import ujson
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 from collections import namedtuple
 
@@ -428,7 +431,8 @@ class TestCrossRealmPMs(ZulipTestCase):
                                      sender_realm="1.example.com")
 
         with assert_invalid_email():
-            self.send_huddle_message(feedback_email, [user1_email, user2_email])
+            self.send_huddle_message(feedback_email, [user1_email, user2_email],
+                                     sender_realm=settings.SYSTEM_BOT_REALM)
 
         # Users on the different realms cannot PM each other
         with assert_invalid_email():
@@ -631,7 +635,7 @@ class ExtractedRecipientsTest(TestCase):
         s = ujson.dumps([' alice@zulip.com ', ' bob@zulip.com ', '   ', 'bob@zulip.com'])
         # sorted() gets confused by extract_recipients' return type
         # For testing, ignorance here is better than manual casting
-        result = sorted(extract_recipients(s))  # type: ignore
+        result = sorted(extract_recipients(s))
         self.assertEqual(result, ['alice@zulip.com', 'bob@zulip.com'])
 
         # simple string with one name
@@ -644,12 +648,12 @@ class ExtractedRecipientsTest(TestCase):
 
         # bare comma-delimited string
         s = 'bob@zulip.com, alice@zulip.com'
-        result = sorted(extract_recipients(s))  # type: ignore
+        result = sorted(extract_recipients(s))
         self.assertEqual(result, ['alice@zulip.com', 'bob@zulip.com'])
 
         # JSON-encoded, comma-delimited string
         s = '"bob@zulip.com,alice@zulip.com"'
-        result = sorted(extract_recipients(s))  # type: ignore
+        result = sorted(extract_recipients(s))
         self.assertEqual(result, ['alice@zulip.com', 'bob@zulip.com'])
 
         # Invalid data
@@ -668,7 +672,7 @@ class ExtractedRecipientsTest(TestCase):
     def test_extract_recipient_ids(self) -> None:
         # JSON list w/dups
         s = ujson.dumps([3, 3, 12])
-        result = sorted(extract_recipients(s))  # type: ignore
+        result = sorted(extract_recipients(s))
         self.assertEqual(result, [3, 12])
 
         # Invalid data
@@ -732,7 +736,7 @@ class PersonalMessagesTest(ZulipTestCase):
         with mock.patch('zerver.models.get_display_recipient', return_value='recip'):
             self.assertEqual(str(message),
                              '<Message: recip /  / '
-                             '<UserProfile: test@zulip.com <Realm: zulip 1>>>')
+                             '<UserProfile: test@zulip.com %s>>' % (user_profile.realm,))
 
             user_message = most_recent_usermessage(user_profile)
             self.assertEqual(str(user_message),
@@ -968,14 +972,15 @@ class StreamMessagesTest(ZulipTestCase):
         self.assertEqual(dct['stream_id'], stream.id)
 
     def test_stream_message_unicode(self) -> None:
-        user_profile = self.example_user('iago')
-        self.subscribe(user_profile, "Denmark")
-        self.send_stream_message(self.example_email("hamlet"), "Denmark",
+        receiving_user_profile = self.example_user('iago')
+        sending_user_profile = self.example_user('hamlet')
+        self.subscribe(receiving_user_profile, "Denmark")
+        self.send_stream_message(sending_user_profile.email, "Denmark",
                                  content="whatever", topic_name="my topic")
-        message = most_recent_message(user_profile)
+        message = most_recent_message(receiving_user_profile)
         self.assertEqual(str(message),
                          u'<Message: Denmark / my topic / '
-                         '<UserProfile: hamlet@zulip.com <Realm: zulip 1>>>')
+                         '<UserProfile: hamlet@zulip.com %s>>' % (sending_user_profile.realm,))
 
     def test_message_mentions(self) -> None:
         user_profile = self.example_user('iago')
@@ -1439,16 +1444,6 @@ class MessagePOSTTest(ZulipTestCase):
                                                      "topic": "Test topic"})
         self.assert_json_success(result)
 
-        # Cross realm bots should be allowed.
-        notification_bot = get_system_bot("notification-bot@zulip.com")
-        result = self.api_post(notification_bot.email,
-                               "/api/v1/messages", {"type": "stream",
-                                                    "to": stream_name,
-                                                    "client": "test suite",
-                                                    "content": "Test message",
-                                                    "topic": "Test topic"})
-        self.assert_json_success(result)
-
         admin_owned_bot = self.create_test_bot(
             short_name='whatever',
             user_profile=user_profile,
@@ -1460,6 +1455,12 @@ class MessagePOSTTest(ZulipTestCase):
                                                     "content": "Test message",
                                                     "topic": "Test topic"})
         self.assert_json_success(result)
+
+        # Cross realm bots should be allowed (through internal_send_message)
+        notification_bot = get_system_bot("notification-bot@zulip.com")
+        internal_send_stream_message(stream.realm, notification_bot, stream,
+                                     'Test topic', 'Test message by notification bot')
+        self.assertEqual(self.get_last_message().content, 'Test message by notification bot')
 
     def test_message_fail_to_announce(self) -> None:
         """
@@ -1895,7 +1896,7 @@ class MessagePOSTTest(ZulipTestCase):
         self.assert_json_error(result, "User not authorized for this query")
 
     def test_send_message_as_superuser_to_domain_that_dont_exist(self) -> None:
-        user = get_system_bot(settings.EMAIL_GATEWAY_BOT)
+        user = self.example_user("default_bot")
         password = "test_password"
         user.set_password(password)
         user.is_api_super_user = True
@@ -2083,23 +2084,26 @@ class MessagePOSTTest(ZulipTestCase):
         result = self.api_post(bot.email, "/api/v1/messages", payload)
         self.assert_json_success(result)
 
-    def test_notification_bot(self) -> None:
-        sender = self.notification_bot()
+    def test_cross_realm_bots_can_use_api_on_own_subdomain(self) -> None:
+        # Cross realm bots should use internal_send_*_message, not the API:
+        notification_bot = self.notification_bot()
+        stream = self.make_stream("notify_channel", get_realm("zulipinternal"))
 
-        stream_name = 'private_stream'
-        self.make_stream(stream_name, invite_only=True)
+        result = self.api_post(notification_bot.email,
+                               "/api/v1/messages",
+                               {"type": "stream",
+                                "to": "notify_channel",
+                                "client": "test suite",
+                                "content": "Test message",
+                                "topic": "Test topic"},
+                               subdomain='zulipinternal')
 
-        payload = dict(
-            type="stream",
-            to=stream_name,
-            sender=sender.email,
-            client='test suite',
-            topic='whatever',
-            content='whatever',
-        )
-
-        result = self.api_post(sender.email, "/api/v1/messages", payload)
         self.assert_json_success(result)
+        message = self.get_last_message()
+
+        self.assertEqual(message.content, "Test message")
+        self.assertEqual(message.sender, notification_bot)
+        self.assertEqual(message.recipient.type_id, stream.id)
 
     def test_create_mirror_user_despite_race(self) -> None:
         realm = get_realm('zulip')
@@ -3015,7 +3019,7 @@ class MirroredMessageUsersTest(ZulipTestCase):
                 create_mirrored_message_users(request, user, recipients)
 
     @mock.patch('DNS.dnslookup', return_value=[['sipbtest:*:20922:101:Fred Sipb,,,:/mit/sipbtest:/bin/athena/tcsh']])
-    def test_zephyr_mirror_new_recipient(self, ignored: Any) -> None:
+    def test_zephyr_mirror_new_recipient(self, ignored: object) -> None:
         """Test mirror dummy user creation for PM recipients"""
         client = get_client(name='zephyr_mirror')
 
@@ -3044,7 +3048,7 @@ class MirroredMessageUsersTest(ZulipTestCase):
         self.assertTrue(bob.is_mirror_dummy)
 
     @mock.patch('DNS.dnslookup', return_value=[['sipbtest:*:20922:101:Fred Sipb,,,:/mit/sipbtest:/bin/athena/tcsh']])
-    def test_zephyr_mirror_new_sender(self, ignored: Any) -> None:
+    def test_zephyr_mirror_new_sender(self, ignored: object) -> None:
         """Test mirror dummy user creation for sender when sending to stream"""
         client = get_client(name='zephyr_mirror')
 
@@ -3475,32 +3479,37 @@ class MessageAccessTests(ZulipTestCase):
 
 class AttachmentTest(ZulipTestCase):
     def test_basics(self) -> None:
+        zulip_realm = get_realm("zulip")
         self.assertFalse(Message.content_has_attachment('whatever'))
         self.assertFalse(Message.content_has_attachment('yo http://foo.com'))
         self.assertTrue(Message.content_has_attachment('yo\n https://staging.zulip.com/user_uploads/'))
-        self.assertTrue(Message.content_has_attachment('yo\n /user_uploads/1/wEAnI-PEmVmCjo15xxNaQbnj/photo-10.jpg foo'))
+        self.assertTrue(Message.content_has_attachment('yo\n /user_uploads/%s/wEAnI-PEmVmCjo15xxNaQbnj/photo-10.jpg foo' % (
+            zulip_realm.id,)))
 
         self.assertFalse(Message.content_has_image('whatever'))
         self.assertFalse(Message.content_has_image('yo http://foo.com'))
-        self.assertFalse(Message.content_has_image('yo\n /user_uploads/1/wEAnI-PEmVmCjo15xxNaQbnj/photo-10.pdf foo'))
+        self.assertFalse(Message.content_has_image('yo\n /user_uploads/%s/wEAnI-PEmVmCjo15xxNaQbnj/photo-10.pdf foo' % (
+            zulip_realm.id,)))
         for ext in [".bmp", ".gif", ".jpg", "jpeg", ".png", ".webp", ".JPG"]:
-            content = 'yo\n /user_uploads/1/wEAnI-PEmVmCjo15xxNaQbnj/photo-10.%s foo' % (ext,)
+            content = 'yo\n /user_uploads/%s/wEAnI-PEmVmCjo15xxNaQbnj/photo-10.%s foo' % (zulip_realm.id, ext)
             self.assertTrue(Message.content_has_image(content))
 
         self.assertFalse(Message.content_has_link('whatever'))
         self.assertTrue(Message.content_has_link('yo\n http://foo.com'))
         self.assertTrue(Message.content_has_link('yo\n https://example.com?spam=1&eggs=2'))
-        self.assertTrue(Message.content_has_link('yo /user_uploads/1/wEAnI-PEmVmCjo15xxNaQbnj/photo-10.pdf foo'))
+        self.assertTrue(Message.content_has_link('yo /user_uploads/%s/wEAnI-PEmVmCjo15xxNaQbnj/photo-10.pdf foo' % (
+            zulip_realm.id,)))
 
     def test_claim_attachment(self) -> None:
 
         # Create dummy DB entry
         user_profile = self.example_user('hamlet')
         sample_size = 10
+        realm_id = user_profile.realm_id
         dummy_files = [
-            ('zulip.txt', '1/31/4CBjtTLYZhk66pZrF8hnYGwc/zulip.txt', sample_size),
-            ('temp_file.py', '1/31/4CBjtTLYZhk66pZrF8hnYGwc/temp_file.py', sample_size),
-            ('abc.py', '1/31/4CBjtTLYZhk66pZrF8hnYGwc/abc.py', sample_size)
+            ('zulip.txt', '%s/31/4CBjtTLYZhk66pZrF8hnYGwc/zulip.txt' % (realm_id,), sample_size),
+            ('temp_file.py', '%s/31/4CBjtTLYZhk66pZrF8hnYGwc/temp_file.py' % (realm_id,), sample_size),
+            ('abc.py', '%s/31/4CBjtTLYZhk66pZrF8hnYGwc/abc.py' % (realm_id,), sample_size)
         ]
 
         for file_name, path_id, size in dummy_files:
@@ -3509,9 +3518,9 @@ class AttachmentTest(ZulipTestCase):
         # Send message referring the attachment
         self.subscribe(user_profile, "Denmark")
 
-        body = "Some files here ...[zulip.txt](http://localhost:9991/user_uploads/1/31/4CBjtTLYZhk66pZrF8hnYGwc/zulip.txt)" +  \
-               "http://localhost:9991/user_uploads/1/31/4CBjtTLYZhk66pZrF8hnYGwc/temp_file.py.... Some more...." + \
-               "http://localhost:9991/user_uploads/1/31/4CBjtTLYZhk66pZrF8hnYGwc/abc.py"
+        body = ("Some files here ...[zulip.txt](http://localhost:9991/user_uploads/{realm_id}/31/4CBjtTLYZhk66pZrF8hnYGwc/zulip.txt)" +
+                "http://localhost:9991/user_uploads/{realm_id}/31/4CBjtTLYZhk66pZrF8hnYGwc/temp_file.py.... Some more...." +
+                "http://localhost:9991/user_uploads/{realm_id}/31/4CBjtTLYZhk66pZrF8hnYGwc/abc.py").format(realm_id=realm_id)
 
         self.send_stream_message(user_profile.email, "Denmark", body, "test")
 
@@ -3679,6 +3688,14 @@ class CheckMessageTest(ZulipTestCase):
         self.assertEqual(test_bot.last_reminder, None)
 
 class DeleteMessageTest(ZulipTestCase):
+    def test_delete_message_invalid_request_format(self) -> None:
+        self.login("iago@zulip.com")
+        msg_id = self.send_stream_message("hamlet@zulip.com", "Scotland")
+        result = self.client_delete('/json/messages/{msg_id}'.format(msg_id=msg_id + 1),
+                                    {'message_id': msg_id})
+        self.assert_json_error(result, "Invalid message(s)")
+        result = self.client_delete('/json/messages/{msg_id}'.format(msg_id=msg_id))
+        self.assert_json_success(result)
 
     def test_delete_message_by_user(self) -> None:
         def set_message_deleting_params(allow_message_deleting: bool,
@@ -4171,7 +4188,6 @@ class MessageHydrationTest(ZulipTestCase):
         stream_id = get_stream('Verona', realm).id
 
         obj = dict(
-            raw_display_recipient='Verona',
             recipient_type=Recipient.STREAM,
             recipient_type_id=stream_id,
             sender_is_mirror_dummy=False,
@@ -4181,21 +4197,24 @@ class MessageHydrationTest(ZulipTestCase):
             sender_id=cordelia.id,
         )
 
-        MessageDict.hydrate_recipient_info(obj)
+        MessageDict.hydrate_recipient_info(obj, 'Verona')
 
         self.assertEqual(obj['display_recipient'], 'Verona')
         self.assertEqual(obj['type'], 'stream')
 
     def test_hydrate_pm_recipient_info(self) -> None:
         cordelia = self.example_user('cordelia')
+        display_recipient = [
+            dict(
+                email='aaron@example.com',
+                full_name='Aaron Smith',
+                short_name='Aaron',
+                id=999,
+                is_mirror_dummy=False
+            ),
+        ]   # type: List[UserDisplayRecipient]
 
         obj = dict(
-            raw_display_recipient=[
-                dict(
-                    email='aaron@example.com',
-                    full_name='Aaron Smith',
-                ),
-            ],
             recipient_type=Recipient.PERSONAL,
             recipient_type_id=None,
             sender_is_mirror_dummy=False,
@@ -4205,7 +4224,7 @@ class MessageHydrationTest(ZulipTestCase):
             sender_id=cordelia.id,
         )
 
-        MessageDict.hydrate_recipient_info(obj)
+        MessageDict.hydrate_recipient_info(obj, display_recipient)
 
         self.assertEqual(
             obj['display_recipient'],
@@ -4213,6 +4232,9 @@ class MessageHydrationTest(ZulipTestCase):
                 dict(
                     email='aaron@example.com',
                     full_name='Aaron Smith',
+                    short_name='Aaron',
+                    id=999,
+                    is_mirror_dummy=False
                 ),
                 dict(
                     email=cordelia.email,
@@ -4266,6 +4288,158 @@ class MessageHydrationTest(ZulipTestCase):
 
         self.assertIn('class="user-mention"', new_message['content'])
         self.assertEqual(new_message['flags'], ['mentioned'])
+
+    def test_display_recipient_up_to_date(self) -> None:
+        """
+        This is a test for a bug where due to caching of message_dicts,
+        after updating a user's information, fetching those cached messages
+        via messages_for_ids would return message_dicts with display_recipient
+        still having the old information. The returned message_dicts should have
+        up-to-date display_recipients and we check for that here.
+        """
+
+        hamlet = self.example_user('hamlet')
+        cordelia = self.example_user('cordelia')
+        message_id = self.send_personal_message(hamlet.email, cordelia.email, 'test')
+
+        cordelia_recipient = get_personal_recipient(cordelia.id)
+        # Cause the display_recipient to get cached:
+        get_display_recipient(cordelia_recipient)
+
+        # Change cordelia's email:
+        cordelia_new_email = 'new-cordelia@zulip.com'
+        cordelia.email = cordelia_new_email
+        cordelia.save()
+
+        # Local display_recipient cache needs to be flushed.
+        # flush_per_request_caches() is called after every request,
+        # so it makes sense to run it here.
+        flush_per_request_caches()
+
+        messages = messages_for_ids(
+            message_ids=[message_id],
+            user_message_flags={message_id: ['read']},
+            search_fields={},
+            apply_markdown=True,
+            client_gravatar=True,
+            allow_edit_history=False,
+        )
+        message = messages[0]
+
+        # Find which display_recipient in the list is cordelia:
+        for display_recipient in message['display_recipient']:
+            if display_recipient['short_name'] == 'cordelia':
+                cordelia_display_recipient = display_recipient
+
+        # Make sure the email is up-to-date.
+        self.assertEqual(cordelia_display_recipient['email'], cordelia_new_email)
+
+class TestMessageForIdsDisplayRecipientFetching(ZulipTestCase):
+    def _verify_display_recipient(self, display_recipient: DisplayRecipientT,
+                                  expected_recipient_objects: Union[Stream, List[UserProfile]]) -> None:
+        if isinstance(expected_recipient_objects, Stream):
+            self.assertEqual(display_recipient, expected_recipient_objects.name)
+
+        else:
+            for user_profile in expected_recipient_objects:
+                recipient_dict = {'email': user_profile.email,
+                                  'full_name': user_profile.full_name,
+                                  'short_name': user_profile.short_name,
+                                  'id': user_profile.id,
+                                  'is_mirror_dummy': user_profile.is_mirror_dummy}  # type: UserDisplayRecipient
+                self.assertTrue(recipient_dict in display_recipient)
+
+    def test_display_recipient_personal(self) -> None:
+        hamlet = self.example_user('hamlet')
+        cordelia = self.example_user('cordelia')
+        othello = self.example_user('othello')
+        message_ids = [
+            self.send_personal_message(hamlet.email, cordelia.email, 'test'),
+            self.send_personal_message(cordelia.email, othello.email, 'test')
+        ]
+
+        messages = messages_for_ids(
+            message_ids=message_ids,
+            user_message_flags={message_id: ['read'] for message_id in message_ids},
+            search_fields={},
+            apply_markdown=True,
+            client_gravatar=True,
+            allow_edit_history=False,
+        )
+
+        self._verify_display_recipient(messages[0]['display_recipient'], [hamlet, cordelia])
+        self._verify_display_recipient(messages[1]['display_recipient'], [cordelia, othello])
+
+    def test_display_recipient_stream(self) -> None:
+        cordelia = self.example_user('cordelia')
+        message_ids = [
+            self.send_stream_message(cordelia.email, "Verona", content='test'),
+            self.send_stream_message(cordelia.email, "Denmark", content='test')
+        ]
+
+        messages = messages_for_ids(
+            message_ids=message_ids,
+            user_message_flags={message_id: ['read'] for message_id in message_ids},
+            search_fields={},
+            apply_markdown=True,
+            client_gravatar=True,
+            allow_edit_history=False,
+        )
+
+        self._verify_display_recipient(messages[0]['display_recipient'], get_stream("Verona", cordelia.realm))
+        self._verify_display_recipient(messages[1]['display_recipient'], get_stream("Denmark", cordelia.realm))
+
+    def test_display_recipient_huddle(self) -> None:
+        hamlet = self.example_user('hamlet')
+        cordelia = self.example_user('cordelia')
+        othello = self.example_user('othello')
+        iago = self.example_user('iago')
+        message_ids = [
+            self.send_huddle_message(hamlet.email, [cordelia.email, othello.email], 'test'),
+            self.send_huddle_message(cordelia.email, [hamlet.email, othello.email, iago.email], 'test')
+        ]
+
+        messages = messages_for_ids(
+            message_ids=message_ids,
+            user_message_flags={message_id: ['read'] for message_id in message_ids},
+            search_fields={},
+            apply_markdown=True,
+            client_gravatar=True,
+            allow_edit_history=False,
+        )
+
+        self._verify_display_recipient(messages[0]['display_recipient'], [hamlet, cordelia, othello])
+        self._verify_display_recipient(messages[1]['display_recipient'], [hamlet, cordelia, othello, iago])
+
+    def test_display_recipient_various_types(self) -> None:
+        hamlet = self.example_user('hamlet')
+        cordelia = self.example_user('cordelia')
+        othello = self.example_user('othello')
+        iago = self.example_user('iago')
+        message_ids = [
+            self.send_huddle_message(hamlet.email, [cordelia.email, othello.email], 'test'),
+            self.send_stream_message(cordelia.email, "Verona", content='test'),
+            self.send_personal_message(hamlet.email, cordelia.email, 'test'),
+            self.send_stream_message(cordelia.email, "Denmark", content='test'),
+            self.send_huddle_message(cordelia.email, [hamlet.email, othello.email, iago.email], 'test'),
+            self.send_personal_message(cordelia.email, othello.email, 'test')
+        ]
+
+        messages = messages_for_ids(
+            message_ids=message_ids,
+            user_message_flags={message_id: ['read'] for message_id in message_ids},
+            search_fields={},
+            apply_markdown=True,
+            client_gravatar=True,
+            allow_edit_history=False,
+        )
+
+        self._verify_display_recipient(messages[0]['display_recipient'], [hamlet, cordelia, othello])
+        self._verify_display_recipient(messages[1]['display_recipient'], get_stream("Verona", hamlet.realm))
+        self._verify_display_recipient(messages[2]['display_recipient'], [hamlet, cordelia])
+        self._verify_display_recipient(messages[3]['display_recipient'], get_stream("Denmark", hamlet.realm))
+        self._verify_display_recipient(messages[4]['display_recipient'], [hamlet, cordelia, othello, iago])
+        self._verify_display_recipient(messages[5]['display_recipient'], [cordelia, othello])
 
 class MessageVisibilityTest(ZulipTestCase):
     def test_update_first_visible_message_id(self) -> None:
@@ -4324,3 +4498,27 @@ class MessageVisibilityTest(ZulipTestCase):
         with mock.patch("zerver.lib.message.update_first_visible_message_id") as m:
             maybe_update_first_visible_message_id(realm, lookback_hours)
         m.assert_called_once_with(realm)
+
+class TestBulkGetHuddleUserIds(ZulipTestCase):
+    def test_bulk_get_huddle_user_ids(self) -> None:
+        hamlet = self.example_user('hamlet')
+        cordelia = self.example_user('cordelia')
+        othello = self.example_user('othello')
+        iago = self.example_user('iago')
+        message_ids = [
+            self.send_huddle_message(hamlet.email, [cordelia.email, othello.email], 'test'),
+            self.send_huddle_message(cordelia.email, [hamlet.email, othello.email, iago.email], 'test')
+        ]
+
+        messages = Message.objects.filter(id__in=message_ids).order_by("id")
+        first_huddle_recipient = messages[0].recipient
+        first_huddle_user_ids = list(get_huddle_user_ids(first_huddle_recipient))
+        second_huddle_recipient = messages[1].recipient
+        second_huddle_user_ids = list(get_huddle_user_ids(second_huddle_recipient))
+
+        huddle_user_ids = bulk_get_huddle_user_ids([first_huddle_recipient, second_huddle_recipient])
+        self.assertEqual(huddle_user_ids[first_huddle_recipient.id], first_huddle_user_ids)
+        self.assertEqual(huddle_user_ids[second_huddle_recipient.id], second_huddle_user_ids)
+
+    def test_bulk_get_huddle_user_ids_empty_list(self) -> None:
+        self.assertEqual(bulk_get_huddle_user_ids([]), {})

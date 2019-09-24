@@ -1,4 +1,4 @@
-import { resolve } from 'path';
+import { basename, resolve } from 'path';
 import * as BundleTracker from 'webpack-bundle-tracker';
 import * as webpack from 'webpack';
 // The devServer member of webpack.Configuration is managed by the
@@ -6,24 +6,42 @@ import * as webpack from 'webpack';
 import * as _webpackDevServer from 'webpack-dev-server';
 import { getExposeLoaders, cacheLoader } from './webpack-helpers';
 import * as MiniCssExtractPlugin from 'mini-css-extract-plugin';
+import * as OptimizeCssAssetsPlugin from 'optimize-css-assets-webpack-plugin';
+import * as CleanCss from 'clean-css';
+import * as TerserPlugin from 'terser-webpack-plugin';
 
 const assets = require('./webpack.assets.json');
 
 export default (env?: string): webpack.Configuration[] => {
     const production: boolean = env === "production";
+    const publicPath = production ? '/static/webpack-bundles/' : '/webpack/';
     const config: webpack.Configuration = {
+        name: "frontend",
         mode: production ? "production" : "development",
         context: resolve(__dirname, "../"),
         entry: assets,
         module: {
             rules: [
-                // Run the typescript compilier on .ts files before webpack
+                // Generate webfont
                 {
-                    test: /\.tsx?$/,
-                    loader: 'ts-loader',
-                    options: {
-                        configFile: require.resolve('../static/js/tsconfig.json'),
-                    },
+                    test: /\.font\.js$/,
+                    use: [
+                        MiniCssExtractPlugin.loader,
+                        'css-loader',
+                        {
+                            loader: 'webfonts-loader',
+                            options: {
+                                fileName: production ? 'files/[fontname].[chunkhash].[ext]' : 'files/[fontname].[ext]',
+                                publicPath,
+                            },
+                        },
+                    ],
+                },
+                // Transpile .js and .ts files with Babel
+                {
+                    test: /\.(js|ts)$/,
+                    include: resolve(__dirname, '../static/js'),
+                    loader: 'babel-loader',
                 },
                 // Uses script-loader on minified files so we don't change global variables in them.
                 // Also has the effect of making processing these files fast
@@ -53,9 +71,10 @@ export default (env?: string): webpack.Configuration[] => {
                         },
                     ],
                 },
-                // sass / scss loader
+                // scss loader
                 {
-                    test: /\.(sass|scss)$/,
+                    test: /\.scss$/,
+                    include: resolve(__dirname, '../static/styles'),
                     use: [
                         {
                             loader: MiniCssExtractPlugin.loader,
@@ -67,11 +86,12 @@ export default (env?: string): webpack.Configuration[] => {
                         {
                             loader: 'css-loader',
                             options: {
+                                importLoaders: 1,
                                 sourceMap: true,
                             },
                         },
                         {
-                            loader: 'sass-loader',
+                            loader: 'postcss-loader',
                             options: {
                                 sourceMap: true,
                             },
@@ -85,8 +105,9 @@ export default (env?: string): webpack.Configuration[] => {
                         // Tell webpack not to explicitly require these.
                         knownHelpers: ['if', 'unless', 'each', 'with',
                             // The ones below are defined in static/js/templates.js
-                            'partial', 'plural', 'eq', 'and', 'or', 'not',
+                            'plural', 'eq', 'and', 'or', 'not',
                             't', 'tr'],
+                        preventIndent: true,
                     },
                 },
                 // load fonts and files
@@ -104,7 +125,7 @@ export default (env?: string): webpack.Configuration[] => {
         },
         output: {
             path: resolve(__dirname, '../static/webpack-bundles'),
-            publicPath: '/static/webpack-bundles/',
+            publicPath,
             filename: production ? '[name].[chunkhash].js' : '[name].js',
         },
         resolve: {
@@ -116,6 +137,44 @@ export default (env?: string): webpack.Configuration[] => {
         // We prefer it over eval since eval has trouble setting
         // breakpoints in chrome.
         devtool: production ? 'source-map' : 'cheap-module-source-map',
+        optimization: {
+            minimizer: [
+                // Based on a comment in NMFR/optimize-css-assets-webpack-plugin#10.
+                // Can be simplified when NMFR/optimize-css-assets-webpack-plugin#87
+                // is fixed.
+                new OptimizeCssAssetsPlugin({
+                    cssProcessor: {
+                        process: async (css, options) => {
+                            const filename = basename(options.to);
+                            const result = await new CleanCss(options).minify({
+                                [filename]: {
+                                    styles: css,
+                                    sourceMap: options.map.prev,
+                                },
+                            });
+                            for (const warning of result.warnings) {
+                                console.warn(warning);
+                            }
+                            return {
+                                css: result.styles + `\n/*# sourceMappingURL=${filename}.map */`,
+                                map: result.sourceMap,
+                            };
+                        },
+                    },
+                    cssProcessorOptions: {
+                        map: {},
+                        returnPromise: true,
+                        sourceMap: true,
+                        sourceMapInlineSources: true,
+                    },
+                }),
+                new TerserPlugin({
+                    cache: true,
+                    parallel: true,
+                    sourceMap: true,
+                }),
+            ],
+        },
     };
 
     // Expose Global variables for third party libraries to webpack modules
@@ -139,7 +198,7 @@ export default (env?: string): webpack.Configuration[] => {
         { path: "sortablejs/Sortable.js"},
         { path: "winchan/winchan.js", name: 'WinChan'},
     ];
-    config.module.rules.push(...getExposeLoaders(exposeOptions));
+    config.module.rules.unshift(...getExposeLoaders(exposeOptions));
 
     if (production) {
         config.plugins = [
@@ -162,7 +221,6 @@ export default (env?: string): webpack.Configuration[] => {
         // Out JS debugging tools
         config.entry['common'].push('./static/js/debug.js');  // eslint-disable-line dot-notation
 
-        config.output.publicPath = '/webpack/';
         config.plugins = [
             new BundleTracker({filename: 'var/webpack-stats-dev.json'}),
             // Better logging from console for hot reload
@@ -178,9 +236,6 @@ export default (env?: string): webpack.Configuration[] => {
         config.devServer = {
             clientLogLevel: "error",
             stats: "errors-only",
-            watchOptions: {
-                poll: 100,
-            },
         };
     }
 

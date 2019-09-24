@@ -1,3 +1,5 @@
+var autosize = require('autosize');
+
 var message_list = (function () {
 
 var exports = {};
@@ -55,7 +57,7 @@ exports.MessageList.prototype = {
         var render_info;
 
         if (interior_messages.length > 0) {
-            self.view.rerender_the_whole_thing();
+            self.view.rerender_preserving_scrolltop(true);
             return true;
         }
         if (top_messages.length > 0) {
@@ -120,6 +122,10 @@ exports.MessageList.prototype = {
 
     is_search: function () {
         return this.data.is_search();
+    },
+
+    can_mark_messages_read: function () {
+        return this.data.can_mark_messages_read();
     },
 
     clear: function  MessageList_clear(opts) {
@@ -307,7 +313,7 @@ exports.MessageList.prototype = {
         row.find(".message_edit_form").empty().append(edit_obj.form);
         row.find(".message_content, .status-message, .message_controls").hide();
         row.find(".message_edit").css("display", "block");
-        row.find(".message_edit_content").autosize();
+        autosize(row.find(".message_edit_content"));
     },
 
     hide_edit_message: function MessageList_hide_edit_message(row) {

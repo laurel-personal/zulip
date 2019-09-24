@@ -838,6 +838,10 @@ run_test('set_up', () => {
     const allow_topic_edit_label_parent = $.create('allow-topic-edit-label-parent');
     $('#id_realm_allow_community_topic_editing_label').set_parent(allow_topic_edit_label_parent);
 
+    channel.get = function (opts) {
+        assert.equal(opts.url, '/json/export/realm');
+    };
+
     // TEST set_up() here, but this mostly just allows us to
     // get access to the click handlers.
     settings_org.maybe_disable_widgets = noop;
@@ -871,21 +875,25 @@ run_test('misc', () => {
     page_params.server_name_changes_disabled = false;
     settings_account.update_name_change_display();
     assert.equal($('#full_name').attr('disabled'), false);
+    assert.equal($('.change_name_tooltip').is(':visible'), false);
 
     page_params.realm_name_changes_disabled = true;
     page_params.server_name_changes_disabled = false;
     settings_account.update_name_change_display();
     assert.equal($('#full_name').attr('disabled'), 'disabled');
+    assert($('.change_name_tooltip').is(':visible'));
 
     page_params.realm_name_changes_disabled = true;
     page_params.server_name_changes_disabled = true;
     settings_account.update_name_change_display();
     assert.equal($('#full_name').attr('disabled'), 'disabled');
+    assert($('.change_name_tooltip').is(':visible'));
 
     page_params.realm_name_changes_disabled = false;
     page_params.server_name_changes_disabled = true;
     settings_account.update_name_change_display();
     assert.equal($('#full_name').attr('disabled'), 'disabled');
+    assert($('.change_name_tooltip').is(':visible'));
 
     page_params.realm_email_changes_disabled = false;
     settings_account.update_email_change_display();
@@ -923,6 +931,7 @@ run_test('misc', () => {
     page_params.is_admin = true;
     settings_account.update_name_change_display();
     assert.equal($('#full_name').attr('disabled'), false);
+    assert.equal($('.change_name_tooltip').is(':visible'), false);
 
     settings_account.update_email_change_display();
     assert.equal($("#change_email .button").attr('disabled'), false);

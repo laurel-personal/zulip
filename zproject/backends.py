@@ -17,12 +17,13 @@ import logging
 import magic
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from django_auth_ldap.backend import LDAPBackend, _LDAPUser
+from django_auth_ldap.backend import LDAPBackend, _LDAPUser, ldap_error
 from django.contrib.auth import get_backends
 from django.contrib.auth.backends import RemoteUserBackend
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
+from django.dispatch import receiver, Signal
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import reverse
@@ -31,13 +32,14 @@ from social_core.backends.github import GithubOAuth2, GithubOrganizationOAuth2, 
     GithubTeamOAuth2
 from social_core.backends.azuread import AzureADOAuth2
 from social_core.backends.base import BaseAuth
+from social_core.backends.google import GoogleOAuth2
 from social_core.backends.oauth import BaseOAuth2
 from social_core.pipeline.partial import partial
 from social_core.exceptions import AuthFailed, SocialAuthBaseException
 
 from zerver.lib.actions import do_create_user, do_reactivate_user, do_deactivate_user, \
     do_update_user_custom_profile_data, validate_email_for_realm
-from zerver.lib.avatar import is_avatar_new
+from zerver.lib.avatar import is_avatar_new, avatar_url
 from zerver.lib.avatar_hash import user_avatar_content_hash
 from zerver.lib.dev_ldap_directory import init_fakeldap
 from zerver.lib.request import JsonableError
@@ -94,15 +96,32 @@ def google_auth_enabled(realm: Optional[Realm]=None) -> bool:
 def github_auth_enabled(realm: Optional[Realm]=None) -> bool:
     return auth_enabled_helper(['GitHub'], realm)
 
-def any_oauth_backend_enabled(realm: Optional[Realm]=None) -> bool:
+def any_social_backend_enabled(realm: Optional[Realm]=None) -> bool:
     """Used by the login page process to determine whether to show the
     'OR' for login with Google"""
-    return auth_enabled_helper(OAUTH_BACKEND_NAMES, realm)
+    social_backend_names = [social_auth_subclass.auth_backend_name
+                            for social_auth_subclass in SOCIAL_AUTH_BACKENDS]
+    return auth_enabled_helper(social_backend_names, realm)
 
 def require_email_format_usernames(realm: Optional[Realm]=None) -> bool:
     if ldap_auth_enabled(realm):
         if settings.LDAP_EMAIL_ATTR or settings.LDAP_APPEND_DOMAIN:
             return False
+    return True
+
+def is_user_active(user_profile: UserProfile, return_data: Optional[Dict[str, Any]]=None) -> bool:
+    if not user_profile.is_active:
+        if return_data is not None:
+            if user_profile.is_mirror_dummy:
+                # Record whether it's a mirror dummy account
+                return_data['is_mirror_dummy'] = True
+            return_data['inactive_user'] = True
+        return False
+    if user_profile.realm.deactivated:
+        if return_data is not None:
+            return_data['inactive_realm'] = True
+        return False
+
     return True
 
 def common_get_active_user(email: str, realm: Realm,
@@ -124,17 +143,9 @@ def common_get_active_user(email: str, realm: Realm,
         if return_data is not None:
             return_data['invalid_subdomain'] = True
         return None
-    if not user_profile.is_active:
-        if return_data is not None:
-            if user_profile.is_mirror_dummy:
-                # Record whether it's a mirror dummy account
-                return_data['is_mirror_dummy'] = True
-            return_data['inactive_user'] = True
+    if not is_user_active(user_profile, return_data):
         return None
-    if user_profile.realm.deactivated:
-        if return_data is not None:
-            return_data['inactive_realm'] = True
-        return None
+
     return user_profile
 
 class ZulipAuthMixin:
@@ -193,45 +204,6 @@ class EmailAuthBackend(ZulipAuthMixin):
         if user_profile.check_password(password):
             return user_profile
         return None
-
-class GoogleMobileOauth2Backend(ZulipAuthMixin):
-    """
-    Google Apps authentication for the legacy Android app.
-    DummyAuthBackend is what's actually used for our modern Google auth,
-    both for web and mobile (the latter via the mobile_flow_otp feature).
-
-    Allows a user to sign in using a Google-issued OAuth2 token.
-
-    Ref:
-        https://developers.google.com/+/mobile/android/sign-in#server-side_access_for_your_app
-        https://developers.google.com/accounts/docs/CrossClientAuth#offlineAccess
-    """
-
-    def authenticate(self, *, google_oauth2_token: str, realm: Realm,
-                     return_data: Optional[Dict[str, Any]]=None) -> Optional[UserProfile]:
-        # We lazily import apiclient as part of optimizing the base
-        # import time for a Zulip management command, since it's only
-        # used in this one code path and takes 30-50ms to import.
-        from apiclient.sample_tools import client as googleapiclient
-        from oauth2client.crypt import AppIdentityError
-        if return_data is None:
-            return_data = {}
-
-        if not google_auth_enabled(realm=realm):
-            return_data["google_auth_disabled"] = True
-            return None
-
-        try:
-            token_payload = googleapiclient.verify_id_token(google_oauth2_token, settings.GOOGLE_CLIENT_ID)
-        except AppIdentityError:
-            return None
-
-        if token_payload["email_verified"] not in (True, "true"):
-            return_data["valid_attestation"] = False
-            return None
-
-        return_data["valid_attestation"] = True
-        return common_get_active_user(token_payload["email"], realm, return_data)
 
 class ZulipRemoteUserBackend(RemoteUserBackend):
     """Authentication backend that reads the Apache REMOTE_USER variable.
@@ -436,7 +408,7 @@ class ZulipLDAPAuthBackendBase(ZulipAuthMixin, LDAPBackend):
 
         existing_values = {}
         for data in user_profile.profile_data:
-            var_name = '_'.join(data['name'].lower().split(' '))    # type: ignore # data field values can also be int
+            var_name = '_'.join(data['name'].lower().split(' '))
             existing_values[var_name] = data['value']
 
         profile_data = []   # type: List[Dict[str, Union[int, str, List[int]]]]
@@ -463,20 +435,23 @@ class ZulipLDAPAuthBackendBase(ZulipAuthMixin, LDAPBackend):
            In authentication contexts, this is overriden in ZulipLDAPAuthBackend.
         """
         (user, built) = super().get_or_build_user(username, ldap_user)
-        self.sync_avatar_from_ldap(user, ldap_user)
-        self.sync_full_name_from_ldap(user, ldap_user)
-        self.sync_custom_profile_fields_from_ldap(user, ldap_user)
         if 'userAccountControl' in settings.AUTH_LDAP_USER_ATTR_MAP:
             user_disabled_in_ldap = self.is_account_control_disabled_user(ldap_user)
-            if user_disabled_in_ldap and user.is_active:
-                logging.info("Deactivating user %s because they are disabled in LDAP." %
-                             (user.email,))
-                do_deactivate_user(user)
+            if user_disabled_in_ldap:
+                if user.is_active:
+                    logging.info("Deactivating user %s because they are disabled in LDAP." %
+                                 (user.email,))
+                    do_deactivate_user(user)
+                # Do an early return to avoid trying to sync additional data.
                 return (user, built)
-            if not user_disabled_in_ldap and not user.is_active:
+            elif not user.is_active:
                 logging.info("Reactivating user %s because they are not disabled in LDAP." %
                              (user.email,))
                 do_reactivate_user(user)
+
+        self.sync_avatar_from_ldap(user, ldap_user)
+        self.sync_full_name_from_ldap(user, ldap_user)
+        self.sync_custom_profile_fields_from_ldap(user, ldap_user)
         return (user, built)
 
 class ZulipLDAPAuthBackend(ZulipLDAPAuthBackendBase):
@@ -604,14 +579,38 @@ class ZulipLDAPUserPopulator(ZulipLDAPAuthBackendBase):
                      return_data: Optional[Dict[str, Any]]=None) -> Optional[UserProfile]:
         return None
 
-def sync_user_from_ldap(user_profile: UserProfile) -> bool:
+class PopulateUserLDAPError(ZulipLDAPException):
+    pass
+
+@receiver(ldap_error, sender=ZulipLDAPUserPopulator)
+def catch_ldap_error(signal: Signal, **kwargs: Any) -> None:
+    """
+    Inside django_auth_ldap populate_user(), if LDAPError is raised,
+    e.g. due to invalid connection credentials, the function catches it
+    and emits a signal (ldap_error) to communicate this error to others.
+    We normally don't use signals, but here there's no choice, so in this function
+    we essentially convert the signal to a normal exception that will properly
+    propagate out of django_auth_ldap internals.
+    """
+    if kwargs['context'] == 'populate_user':
+        # The exception message can contain the password (if it was invalid),
+        # so it seems better not to log that, and only use the original exception's name here.
+        raise PopulateUserLDAPError(kwargs['exception'].__class__.__name__)
+
+def sync_user_from_ldap(user_profile: UserProfile, logger: logging.Logger) -> bool:
     backend = ZulipLDAPUserPopulator()
     updated_user = backend.populate_user(backend.django_to_ldap_username(user_profile.email))
-    if not updated_user:
-        if settings.LDAP_DEACTIVATE_NON_MATCHING_USERS:
-            do_deactivate_user(user_profile)
-        return False
-    return True
+    if updated_user:
+        logger.info("Updated %s." % (user_profile.email,))
+        return True
+
+    if settings.LDAP_DEACTIVATE_NON_MATCHING_USERS:
+        do_deactivate_user(user_profile)
+        logger.info("Deactivated non-matching user: %s" % (user_profile.email,))
+        return True
+    elif user_profile.is_active:
+        logger.warning("Did not find %s in LDAP." % (user_profile.email,))
+    return False
 
 # Quick tool to test whether you're correctly authenticating to LDAP
 def query_ldap(email: str) -> List[str]:
@@ -696,10 +695,17 @@ def social_associate_user_helper(backend: BaseAuth, return_data: Dict[str, Any],
             chosen_email = backend.strategy.request_data().get('email')
 
         if not chosen_email:
+            avatars = {}  # Dict[str, str]
+            for email in verified_emails:
+                existing_account = common_get_active_user(email, realm, {})
+                if existing_account is not None:
+                    avatars[email] = avatar_url(existing_account)
+
             return render(backend.strategy.request, 'zerver/social_auth_select_email.html', context = {
                 'primary_email': verified_emails[0],
                 'verified_non_primary_emails': verified_emails[1:],
-                'backend': 'github'
+                'backend': 'github',
+                'avatar_urls': avatars,
             })
 
         try:
@@ -823,7 +829,7 @@ def social_auth_finish(backend: Any,
     # being incorrectly authenticated.
     assert return_data.get('valid_attestation') is True
 
-    strategy = backend.strategy  # type: ignore # This comes from Python Social Auth.
+    strategy = backend.strategy
     email_address = return_data['validated_email']
     full_name = return_data['full_name']
     is_signup = strategy.session_get('is_signup') == '1'
@@ -925,15 +931,16 @@ class GitHubAuthBackend(SocialAuthMixin, GithubOAuth2):
         return verified_emails
 
     def filter_usable_emails(self, emails: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        # We only let users login using email addresses that are verified
-        # by GitHub, because the whole point is for the user to
-        # demonstrate that they control the target email address.  We also
-        # disallow the @noreply.github.com email addresses, because
-        # structurally, we only want to allow email addresses that can
-        # receive emails, and those cannot.
+        # We only let users login using email addresses that are
+        # verified by GitHub, because the whole point is for the user
+        # to demonstrate that they control the target email address.
+        # We also disallow the
+        # @noreply.github.com/@users.noreply.github.com email
+        # addresses, because structurally, we only want to allow email
+        # addresses that can receive emails, and those cannot.
         return [
             email for email in emails
-            if email.get('verified') and not email["email"].endswith("@noreply.github.com")
+            if email.get('verified') and not email["email"].endswith("noreply.github.com")
         ]
 
     def user_data(self, access_token: str, *args: Any, **kwargs: Any) -> Dict[str, str]:
@@ -966,19 +973,32 @@ class AzureADAuthBackend(SocialAuthMixin, AzureADOAuth2):
     sort_order = 50
     auth_backend_name = "AzureAD"
 
+class GoogleAuthBackend(SocialAuthMixin, GoogleOAuth2):
+    sort_order = 150
+    auth_backend_name = "Google"
+    name = "google"
+
+    def get_verified_emails(self, *args: Any, **kwargs: Any) -> List[str]:
+        verified_emails = []    # type: List[str]
+        details = kwargs["response"]
+        email_verified = details.get("email_verified")
+        if email_verified:
+            verified_emails.append(details["email"])
+        return verified_emails
+
 AUTH_BACKEND_NAME_MAP = {
     'Dev': DevAuthBackend,
     'Email': EmailAuthBackend,
-    'Google': GoogleMobileOauth2Backend,
     'LDAP': ZulipLDAPAuthBackend,
     'RemoteUser': ZulipRemoteUserBackend,
 }  # type: Dict[str, Any]
-OAUTH_BACKEND_NAMES = ["Google"]  # type: List[str]
 SOCIAL_AUTH_BACKENDS = []  # type: List[BaseOAuth2]
 
 # Authomatically add all of our social auth backends to relevant data structures.
 for social_auth_subclass in SocialAuthMixin.__subclasses__():
     AUTH_BACKEND_NAME_MAP[social_auth_subclass.auth_backend_name] = social_auth_subclass
-    if issubclass(social_auth_subclass, BaseOAuth2):
-        OAUTH_BACKEND_NAMES.append(social_auth_subclass.auth_backend_name)
-        SOCIAL_AUTH_BACKENDS.append(social_auth_subclass)
+    SOCIAL_AUTH_BACKENDS.append(social_auth_subclass)
+
+# Provide this alternative name for backwards compatibility with
+# installations that had the old backend enabled.
+GoogleMobileOauth2Backend = GoogleAuthBackend

@@ -1,5 +1,5 @@
-
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from zerver.lib.types import DisplayRecipientT
 
 from confirmation.models import one_click_unsubscribe_link
 from django.conf import settings
@@ -27,12 +27,13 @@ from zerver.models import (
 
 from datetime import timedelta
 from email.utils import formataddr
+import html2text
 from lxml.cssselect import CSSSelector
 import lxml.html
 import re
-import subprocess
 from collections import defaultdict
 import pytz
+from bs4 import BeautifulSoup
 
 def relative_to_full_url(base_url: str, content: str) -> str:
     # Convert relative URLs to absolute URLs.
@@ -138,7 +139,18 @@ def build_message_list(user_profile: UserProfile, messages: List[Message]) -> Li
         # with a simple hyperlink.
         return re.sub(r"\[(\S*)\]\((\S*)\)", r"\2", content)
 
-    def build_message_payload(message: Message) -> Dict[str, str]:
+    def append_sender_to_message(message_plain: str, message_html: str, sender: str) -> Tuple[str, str]:
+        message_plain = "{}: {}".format(sender, message_plain)
+        message_soup = BeautifulSoup(message_html, "html.parser")
+        sender_name_soup = BeautifulSoup("<b>{}</b>: ".format(sender), "html.parser")
+        first_tag = message_soup.find()
+        if first_tag.name == "p":
+            first_tag.insert(0, sender_name_soup)
+        else:
+            message_soup.insert(0, sender_name_soup)
+        return message_plain, str(message_soup)
+
+    def build_message_payload(message: Message, sender: Optional[str]=None) -> Dict[str, str]:
         plain = message.content
         plain = fix_plaintext_image_urls(plain)
         # There's a small chance of colliding with non-Zulip URLs containing
@@ -154,13 +166,14 @@ def build_message_list(user_profile: UserProfile, messages: List[Message]) -> Li
         html = message.rendered_content
         html = relative_to_full_url(user_profile.realm.uri, html)
         html = fix_emojis(html, user_profile.realm.uri, user_profile.emojiset)
-
+        if sender:
+            plain, html = append_sender_to_message(plain, html, sender)
         return {'plain': plain, 'html': html}
 
     def build_sender_payload(message: Message) -> Dict[str, Any]:
         sender = sender_string(message)
         return {'sender': sender,
-                'content': [build_message_payload(message)]}
+                'content': [build_message_payload(message, sender)]}
 
     def message_header(user_profile: UserProfile, message: Message) -> Dict[str, Any]:
         if message.recipient.type == Recipient.PERSONAL:
@@ -238,7 +251,7 @@ def build_message_list(user_profile: UserProfile, messages: List[Message]) -> Li
     return messages_to_render
 
 def get_narrow_url(user_profile: UserProfile, message: Message,
-                   display_recipient: Optional[Union[str, List[Dict[str, Any]]]]=None,
+                   display_recipient: Optional[DisplayRecipientT]=None,
                    stream: Optional[Stream]=None) -> str:
     """The display_recipient and stream arguments are optional.  If not
     provided, we'll compute them from the message; they exist as a
@@ -302,6 +315,8 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
             (recipients,)
         )
 
+    # This link is no longer a part of the email, but keeping the code in case
+    # we find a clean way to add it back in the future
     unsubscribe_link = one_click_unsubscribe_link(user_profile, "missed_messages")
     context = common_context(user_profile)
     context.update({
@@ -315,9 +330,9 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
     triggers = list(message['trigger'] for message in missed_messages)
     unique_triggers = set(triggers)
     context.update({
-        'mention': 'mentioned' in unique_triggers,
+        'mention': 'mentioned' in unique_triggers or 'wildcard_mentioned' in unique_triggers,
         'stream_email_notify': 'stream_email_notify' in unique_triggers,
-        'mention_count': triggers.count('mentioned'),
+        'mention_count': triggers.count('mentioned') + triggers.count("wildcard_mentioned"),
     })
 
     # If this setting (email mirroring integration) is enabled, only then
@@ -369,10 +384,8 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
         # Keep only the senders who actually mentioned the user
         if context['mention']:
             senders = list(set(m['message'].sender for m in missed_messages
-                           if m['trigger'] == 'mentioned'))
-            # TODO: When we add wildcard mentions that send emails, we
-            # should make sure the right logic applies here.
-
+                               if m['trigger'] == 'mentioned' or
+                               m['trigger'] == 'wildcard_mentioned'))
         message = missed_messages[0]['message']
         stream = Stream.objects.only('id', 'name').get(id=message.recipient.type_id)
         stream_header = "%s > %s" % (stream.name, message.topic_name())
@@ -565,22 +578,9 @@ def enqueue_welcome_emails(user: UserProfile, realm_creation: bool=False) -> Non
             from_address=from_address, context=context, delay=followup_day2_email_delay(user))
 
 def convert_html_to_markdown(html: str) -> str:
-    # On Linux, the tool installs as html2markdown, and there's a command called
-    # html2text that does something totally different. On OSX, the tool installs
-    # as html2text.
-    commands = ["html2markdown", "html2text"]
+    parser = html2text.HTML2Text()
+    markdown = parser.handle(html).strip()
 
-    for command in commands:
-        try:
-            # A body width of 0 means do not try to wrap the text for us.
-            p = subprocess.Popen(
-                [command, "--body-width=0"], stdout=subprocess.PIPE,
-                stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
-            break
-        except OSError:
-            continue
-
-    markdown = p.communicate(input=html.encode('utf-8'))[0].decode('utf-8').strip()
     # We want images to get linked and inline previewed, but html2text will turn
     # them into links of the form `![](http://foo.com/image.png)`, which is
     # ugly. Run a regex over the resulting description, turning links of the

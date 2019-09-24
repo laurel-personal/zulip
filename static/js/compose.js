@@ -962,6 +962,12 @@ exports.initialize = function () {
         }
 
         var compose_stream = stream_data.get_sub(compose_state.stream_name());
+        if (compose_stream === undefined) {
+            // We have an invalid stream name, don't warn about this here as
+            // we show an error to the user when they try to send the message.
+            return;
+        }
+
         if (compose_stream.subscribers && data.stream.subscribers) {
             var compose_stream_sub = compose_stream.subscribers.keys();
             var mentioned_stream_sub = data.stream.subscribers.keys();
@@ -1067,6 +1073,16 @@ exports.initialize = function () {
             mode: 'compose',
         })
     );
+
+    $("#compose-textarea").focus(function () {
+        var opts = {
+            message_type: compose_state.get_message_type(),
+            stream: $('#stream_message_recipient_stream').val(),
+            topic: $('#stream_message_recipient_topic').val(),
+            private_message_recipient: compose_pm_pill.get_emails(),
+        };
+        compose_actions.update_placeholder_text(opts);
+    });
 
     if (page_params.narrow !== undefined) {
         if (page_params.narrow_topic !== undefined) {

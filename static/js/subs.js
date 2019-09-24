@@ -1,4 +1,3 @@
-var render_email_address_hint = require('../templates/email_address_hint.hbs');
 var render_subscription = require('../templates/subscription.hbs');
 var render_subscription_settings = require('../templates/subscription_settings.hbs');
 var render_subscription_table_body = require('../templates/subscription_table_body.hbs');
@@ -130,6 +129,8 @@ exports.is_subscribed_stream_tab_active = function () {
 };
 
 exports.update_stream_name = function (sub, new_name) {
+    var old_name = sub.name;
+
     // Rename the stream internally.
     stream_data.rename_sub(sub, new_name);
     var stream_id = sub.stream_id;
@@ -149,6 +150,14 @@ exports.update_stream_name = function (sub, new_name) {
 
     // Update the message feed.
     message_live_update.update_stream_name(stream_id, new_name);
+
+    // Clear rendered typeahead cache
+    typeahead_helper.clear_rendered_stream(stream_id);
+
+    // Update compose_state if needed
+    if (compose_state.stream_name() === old_name) {
+        compose_state.stream_name(new_name);
+    }
 };
 
 exports.update_stream_description = function (sub, description, rendered_description) {
@@ -200,26 +209,6 @@ exports.rerender_subscriptions_settings = function (sub) {
     stream_ui_updates.update_subscribers_count(sub);
     stream_ui_updates.update_subscribers_list(sub);
 };
-
-function add_email_hint_handler() {
-    // Add a popover explaining stream e-mail addresses on hover.
-
-    $("body").on("mouseover", '.stream-email-hint', function (e) {
-        var email_address_hint_content = render_email_address_hint({ page_params: page_params });
-        $(e.target).popover({
-            placement: "right",
-            title: "Email integration",
-            content: email_address_hint_content,
-            trigger: "manual",
-            animation: false});
-        $(e.target).popover('show');
-        e.stopPropagation();
-    });
-    $("body").on("mouseout", '.stream-email-hint', function (e) {
-        $(e.target).popover('hide');
-        e.stopPropagation();
-    });
-}
 
 exports.add_sub_to_table = function (sub) {
     if (exports.is_sub_already_present(sub)) {
@@ -795,8 +784,6 @@ exports.sub_or_unsub = function (sub) {
 
 
 exports.initialize = function () {
-    add_email_hint_handler();
-
     $("#subscriptions_table").on("click", ".create_stream_button", function (e) {
         e.preventDefault();
         exports.open_create_stream();

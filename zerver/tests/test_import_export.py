@@ -301,7 +301,8 @@ class ImportExportTest(ZulipTestCase):
             upload_emoji_image(img_file, '1.png', user_profile)
         with get_test_image_file('img.png') as img_file:
             upload_avatar_image(img_file, user_profile, user_profile)
-        test_image = open(get_test_image_file('img.png').name, 'rb').read()
+        with open(get_test_image_file('img.png').name, 'rb') as f:
+            test_image = f.read()
         message.sender.avatar_source = 'U'
         message.sender.save()
 
@@ -323,7 +324,7 @@ class ImportExportTest(ZulipTestCase):
 
         # Test uploads
         fn = os.path.join(full_data['uploads_dir'], path_id)
-        with open(fn) as f:
+        with open(fn, 'r') as f:
             self.assertEqual(f.read(), 'zulip!')
         records = full_data['uploads_dir_records']
         self.assertEqual(records[0]['path'], path_id)
@@ -335,12 +336,13 @@ class ImportExportTest(ZulipTestCase):
         self.assertEqual('1.png', os.listdir(fn)[0])
         records = full_data['emoji_dir_records']
         self.assertEqual(records[0]['file_name'], '1.png')
-        self.assertEqual(records[0]['path'], '1/emoji/images/1.png')
-        self.assertEqual(records[0]['s3_path'], '1/emoji/images/1.png')
+        self.assertEqual(records[0]['path'], '2/emoji/images/1.png')
+        self.assertEqual(records[0]['s3_path'], '2/emoji/images/1.png')
 
         # Test avatars
         fn = os.path.join(full_data['avatar_dir'], original_avatar_path_id)
-        fn_data = open(fn, 'rb').read()
+        with open(fn, 'rb') as fb:
+            fn_data = fb.read()
         self.assertEqual(fn_data, test_image)
         records = full_data['avatar_dir_records']
         record_path = [record['path'] for record in records]
@@ -370,7 +372,7 @@ class ImportExportTest(ZulipTestCase):
         # Test uploads
         fields = attachment_path_id.split('/')
         fn = os.path.join(full_data['uploads_dir'], os.path.join(fields[0], fields[1], fields[2]))
-        with open(fn) as f:
+        with open(fn, 'r') as f:
             self.assertEqual(f.read(), 'zulip!')
         records = full_data['uploads_dir_records']
         self.assertEqual(records[0]['path'], os.path.join(fields[0], fields[1], fields[2]))
@@ -384,13 +386,14 @@ class ImportExportTest(ZulipTestCase):
         records = full_data['emoji_dir_records']
         self.assertEqual(records[0]['file_name'], '1.png')
         self.assertTrue('last_modified' in records[0])
-        self.assertEqual(records[0]['path'], '1/emoji/images/1.png')
-        self.assertEqual(records[0]['s3_path'], '1/emoji/images/1.png')
+        self.assertEqual(records[0]['path'], '2/emoji/images/1.png')
+        self.assertEqual(records[0]['s3_path'], '2/emoji/images/1.png')
         check_variable_type(records[0]['user_profile_id'], records[0]['realm_id'])
 
         # Test avatars
         fn = os.path.join(full_data['avatar_dir'], original_avatar_path_id)
-        fn_data = open(fn, 'rb').read()
+        with open(fn, 'rb') as file:
+            fn_data = file.read()
         self.assertEqual(fn_data, test_image)
         records = full_data['avatar_dir_records']
         record_path = [record['path'] for record in records]
@@ -412,13 +415,12 @@ class ImportExportTest(ZulipTestCase):
         realm_emoji.save()
 
         data = full_data['realm']
-        self.assertEqual(len(data['zerver_userprofile_crossrealm']), 0)
+        self.assertEqual(len(data['zerver_userprofile_crossrealm']), 3)
         self.assertEqual(len(data['zerver_userprofile_mirrordummy']), 0)
 
         exported_user_emails = self.get_set(data['zerver_userprofile'], 'email')
         self.assertIn(self.example_email('cordelia'), exported_user_emails)
         self.assertIn('default-bot@zulip.com', exported_user_emails)
-        self.assertIn('emailgateway@zulip.com', exported_user_emails)
 
         exported_streams = self.get_set(data['zerver_stream'], 'name')
         self.assertEqual(
@@ -469,7 +471,6 @@ class ImportExportTest(ZulipTestCase):
         self.assertIn(self.example_email('cordelia'), dummy_user_emails)
         self.assertIn(self.example_email('othello'), dummy_user_emails)
         self.assertIn('default-bot@zulip.com', dummy_user_emails)
-        self.assertIn('emailgateway@zulip.com', dummy_user_emails)
         self.assertNotIn(self.example_email('iago'), dummy_user_emails)
         self.assertNotIn(self.example_email('hamlet'), dummy_user_emails)
 
@@ -538,7 +539,7 @@ class ImportExportTest(ZulipTestCase):
 
         data = full_data['realm']
 
-        self.assertEqual(len(data['zerver_userprofile_crossrealm']), 0)
+        self.assertEqual(len(data['zerver_userprofile_crossrealm']), 3)
         self.assertEqual(len(data['zerver_userprofile_mirrordummy']), 0)
 
         exported_user_emails = self.get_set(data['zerver_userprofile'], 'email')
@@ -547,7 +548,6 @@ class ImportExportTest(ZulipTestCase):
         self.assertIn(self.example_email('iago'), exported_user_emails)
         self.assertIn(self.example_email('othello'), exported_user_emails)
         self.assertIn('default-bot@zulip.com', exported_user_emails)
-        self.assertIn('emailgateway@zulip.com', exported_user_emails)
 
         exported_streams = self.get_set(data['zerver_stream'], 'name')
         self.assertEqual(
@@ -994,7 +994,8 @@ class ImportExportTest(ZulipTestCase):
             do_import_realm(os.path.join(settings.TEST_WORKER_DIR, 'test-export'),
                             'test-zulip')
         imported_realm = Realm.objects.get(string_id='test-zulip')
-        test_image_data = open(get_test_image_file('img.png').name, 'rb').read()
+        with open(get_test_image_file('img.png').name, 'rb') as f:
+            test_image_data = f.read()
 
         # Test attachments
         uploaded_file = Attachment.objects.get(realm=imported_realm)

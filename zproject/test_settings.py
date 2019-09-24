@@ -18,6 +18,8 @@ if os.getenv("EXTERNAL_HOST") is None:
     os.environ["EXTERNAL_HOST"] = "testserver"
 from .settings import *
 
+FAKE_EMAIL_DOMAIN = "zulip.testserver"
+
 # Clear out the REALM_HOSTS set in dev_settings.py
 REALM_HOSTS = {}
 
@@ -126,15 +128,16 @@ ENABLE_FILE_LINKS = True
 
 # These settings are set dynamically in `zerver/lib/test_runner.py`:
 TEST_WORKER_DIR = ''
-LOCAL_UPLOADS_DIR = ''
+# Allow setting LOCAL_UPLOADS_DIR in the environment so that the
+# Casper/API tests in test_server.py can control this.
+if "LOCAL_UPLOADS_DIR" in os.environ:
+    LOCAL_UPLOADS_DIR = os.getenv("LOCAL_UPLOADS_DIR")
+# Otherwise, we use the default value from dev_settings.py
 
 S3_KEY = 'test-key'
 S3_SECRET_KEY = 'test-secret-key'
 S3_AUTH_UPLOADS_BUCKET = 'test-authed-bucket'
 S3_AVATAR_BUCKET = 'test-avatar-bucket'
-
-# Test Custom TOS template rendering
-TERMS_OF_SERVICE = 'corporate/terms.md'
 
 INLINE_URL_EMBED_PREVIEW = False
 
@@ -150,6 +153,8 @@ GOOGLE_OAUTH2_CLIENT_SECRET = "secret"
 
 SOCIAL_AUTH_GITHUB_KEY = "key"
 SOCIAL_AUTH_GITHUB_SECRET = "secret"
+SOCIAL_AUTH_GOOGLE_KEY = "key"
+SOCIAL_AUTH_GOOGLE_SECRET = "secret"
 SOCIAL_AUTH_SUBDOMAIN = 'www'
 
 # By default two factor authentication is disabled in tests.

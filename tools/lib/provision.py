@@ -7,15 +7,14 @@ import platform
 import subprocess
 import glob
 import hashlib
-import shutil
 
 os.environ["PYTHONUNBUFFERED"] = "y"
 
 ZULIP_PATH = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 sys.path.append(ZULIP_PATH)
-from scripts.lib.zulip_tools import run, run_as_root, OKBLUE, ENDC, WARNING, \
-    get_dev_uuid_var_path, FAIL, parse_lsb_release, file_or_package_hash_updated, \
+from scripts.lib.zulip_tools import run_as_root, ENDC, WARNING, \
+    get_dev_uuid_var_path, FAIL, os_families, parse_os_release, \
     overwrite_symlink
 from scripts.lib.setup_venv import (
     VENV_DEPENDENCIES, REDHAT_VENV_DEPENDENCIES,
@@ -23,53 +22,17 @@ from scripts.lib.setup_venv import (
     FEDORA_VENV_DEPENDENCIES
 )
 from scripts.lib.node_cache import setup_node_modules, NODE_MODULES_CACHE_PATH
+from tools.setup import setup_venvs
 
-from version import PROVISION_VERSION
-if False:
-    # See https://zulip.readthedocs.io/en/latest/testing/mypy.html#mypy-in-production-scripts
-    from typing import Any, List
+from typing import List, TYPE_CHECKING
+if TYPE_CHECKING:
+    # typing_extensions might not be installed yet
+    from typing_extensions import NoReturn
 
-from tools.setup.generate_zulip_bots_static_files import generate_zulip_bots_static_files
-
-SUPPORTED_PLATFORMS = {
-    "Ubuntu": [
-        "xenial",
-        "bionic",
-        "cosmic",
-        "disco",
-    ],
-    "Debian": [
-        "stretch",
-        "buster",
-    ],
-    "CentOS": [
-        "centos7",
-    ],
-    "Fedora": [
-        "fedora29",
-    ],
-    "RedHat": [
-        "rhel7",
-    ]
-}
-
-VENV_PATH = "/srv/zulip-py3-venv"
 VAR_DIR_PATH = os.path.join(ZULIP_PATH, 'var')
-LOG_DIR_PATH = os.path.join(VAR_DIR_PATH, 'log')
-UPLOAD_DIR_PATH = os.path.join(VAR_DIR_PATH, 'uploads')
-TEST_UPLOAD_DIR_PATH = os.path.join(VAR_DIR_PATH, 'test_uploads')
-COVERAGE_DIR_PATH = os.path.join(VAR_DIR_PATH, 'coverage')
-NODE_TEST_COVERAGE_DIR_PATH = os.path.join(VAR_DIR_PATH, 'node-coverage')
-XUNIT_XML_TEST_RESULTS_DIR_PATH = os.path.join(VAR_DIR_PATH, 'xunit-test-results')
 
 is_travis = 'TRAVIS' in os.environ
 is_circleci = 'CIRCLECI' in os.environ
-
-# TODO: De-duplicate this with emoji_dump.py
-EMOJI_CACHE_PATH = "/srv/zulip-emoji-cache"
-if is_travis:
-    # In Travis CI, we don't have root access
-    EMOJI_CACHE_PATH = "/home/travis/zulip-emoji-cache"
 
 if not os.path.exists(os.path.join(ZULIP_PATH, ".git")):
     print(FAIL + "Error: No Zulip git repository present!" + ENDC)
@@ -114,42 +77,37 @@ else:
     logging.critical("Only x86 is supported;"
                      " ask on chat.zulip.org if you want another architecture.")
     # Note: It's probably actually not hard to add additional
-    # architectures; the main problem is that we may not have
-    # tsearch_extras binaries compiled (and some testing is required).
+    # architectures.
     sys.exit(1)
 
-# Ideally we wouldn't need to install a dependency here, before we
-# know the codename.
-is_rhel_based = os.path.exists("/etc/redhat-release")
-if (not is_rhel_based) and (not os.path.exists("/usr/bin/lsb_release")):
-    run_as_root(["apt-get", "install", "-y", "lsb-release"])
-
-distro_info = parse_lsb_release()
-vendor = distro_info['DISTRIB_ID']
-codename = distro_info['DISTRIB_CODENAME']
-family = distro_info['DISTRIB_FAMILY']
-if not (vendor in SUPPORTED_PLATFORMS and codename in SUPPORTED_PLATFORMS[vendor]):
-    logging.critical("Unsupported platform: {} {}".format(vendor, codename))
-    if codename == 'trusty':
+distro_info = parse_os_release()
+vendor = distro_info['ID']
+os_version = distro_info['VERSION_ID']
+if vendor == "debian" and os_version == "9":  # stretch
+    POSTGRES_VERSION = "9.6"
+elif vendor == "debian" and os_version == "10":  # buster
+    POSTGRES_VERSION = "11"
+elif vendor == "ubuntu" and os_version == "16.04":  # xenial
+    POSTGRES_VERSION = "9.5"
+elif vendor == "ubuntu" and os_version in ["18.04", "18.10"]:  # bionic, cosmic
+    POSTGRES_VERSION = "10"
+elif vendor == "ubuntu" and os_version == "19.04":  # disco
+    POSTGRES_VERSION = "11"
+elif vendor == "fedora" and os_version == "29":
+    POSTGRES_VERSION = "10"
+elif vendor == "rhel" and os_version.startswith("7."):
+    POSTGRES_VERSION = "10"
+elif vendor == "centos" and os_version == "7":
+    POSTGRES_VERSION = "10"
+else:
+    logging.critical("Unsupported platform: {} {}".format(vendor, os_version))
+    if vendor == 'ubuntu' and os_version == '14.04':
         print()
         print("Ubuntu Trusty reached end-of-life upstream and is no longer a supported platform for Zulip")
         if os.path.exists('/home/vagrant'):
             print("To upgrade, run `vagrant destroy`, and then recreate the Vagrant guest.\n")
             print("See: https://zulip.readthedocs.io/en/latest/development/setup-vagrant.html")
     sys.exit(1)
-
-POSTGRES_VERSION_MAP = {
-    "stretch": "9.6",
-    "buster": "11",
-    "xenial": "9.5",
-    "bionic": "10",
-    "cosmic": "10",
-    "disco": "11",
-    "centos7": "10",
-    "fedora29": "10",
-    "rhel7": "10",
-}
-POSTGRES_VERSION = POSTGRES_VERSION_MAP[codename]
 
 COMMON_DEPENDENCIES = [
     "memcached",
@@ -162,21 +120,21 @@ COMMON_DEPENDENCIES = [
     "gettext",              # Used by makemessages i18n
     "curl",                 # Used for fetching PhantomJS as wget occasionally fails on redirects
     "moreutils",            # Used for sponge command
+    "unzip",                # Needed for Slack import
 ]
 
 UBUNTU_COMMON_APT_DEPENDENCIES = COMMON_DEPENDENCIES + [
     "redis-server",
     "hunspell-en-us",
-    "yui-compressor",
     "puppet-lint",
     "netcat",               # Used for flushing memcached
     "libfontconfig1",       # Required by phantomjs
+    "default-jre-headless",  # Required by vnu-jar
 ] + VENV_DEPENDENCIES + THUMBOR_VENV_DEPENDENCIES
 
 COMMON_YUM_DEPENDENCIES = COMMON_DEPENDENCIES + [
     "redis",
     "hunspell-en-US",
-    "yuicompressor",
     "rubygem-puppet-lint",
     "nmap-ncat",
     "fontconfig",  # phantomjs dependencies from here until libstdc++
@@ -186,56 +144,36 @@ COMMON_YUM_DEPENDENCIES = COMMON_DEPENDENCIES + [
     "libstdc++"
 ] + YUM_THUMBOR_VENV_DEPENDENCIES
 
-BUILD_TSEARCH_FROM_SOURCE = False
 BUILD_PGROONGA_FROM_SOURCE = False
-if vendor in ["Ubuntu", "Debian"]:
-    if codename in ("cosmic", "disco"):
-        # For platforms without a tsearch-extras package distributed
-        # from our PPA, we need to build from source.
-        BUILD_TSEARCH_FROM_SOURCE = True
-        SYSTEM_DEPENDENCIES = UBUNTU_COMMON_APT_DEPENDENCIES + [
-            pkg.format(POSTGRES_VERSION) for pkg in [
-                "postgresql-{0}",
-                "postgresql-{0}-pgroonga",
-                # Dependency for building tsearch_extras from source
-                "postgresql-server-dev-{0}",
-            ]
+if vendor == 'debian' and os_version in []:
+    # For platforms without a pgroonga release, we need to build it
+    # from source.
+    BUILD_PGROONGA_FROM_SOURCE = True
+    SYSTEM_DEPENDENCIES = UBUNTU_COMMON_APT_DEPENDENCIES + [
+        pkg.format(POSTGRES_VERSION) for pkg in [
+            "postgresql-{0}",
+            # Dependency for building pgroonga from source
+            "postgresql-server-dev-{0}",
+            "libgroonga-dev",
+            "libmsgpack-dev",
         ]
-    elif codename == "buster":
-        # For platforms without a tsearch-extras package distributed
-        # from our PPA or a pgroonga release, we need to build both
-        # from source.
-        BUILD_PGROONGA_FROM_SOURCE = True
-        BUILD_TSEARCH_FROM_SOURCE = True
-        SYSTEM_DEPENDENCIES = UBUNTU_COMMON_APT_DEPENDENCIES + [
-            pkg.format(POSTGRES_VERSION) for pkg in [
-                "postgresql-{0}",
-                # Dependency for building tsearch_extras from source
-                "postgresql-server-dev-{0}",
-                # Dependency for building pgroonga from source
-                "libgroonga-dev",
-                "libmsgpack-dev",
-            ]
+    ]
+elif "debian" in os_families():
+    SYSTEM_DEPENDENCIES = UBUNTU_COMMON_APT_DEPENDENCIES + [
+        pkg.format(POSTGRES_VERSION) for pkg in [
+            "postgresql-{0}",
+            "postgresql-{0}-pgroonga",
         ]
-    else:
-        SYSTEM_DEPENDENCIES = UBUNTU_COMMON_APT_DEPENDENCIES + [
-            pkg.format(POSTGRES_VERSION) for pkg in [
-                "postgresql-{0}",
-                "postgresql-{0}-pgroonga",
-                "postgresql-{0}-tsearch-extras",
-            ]
-        ]
-elif vendor in ["CentOS", "RedHat"]:
+    ]
+elif "rhel" in os_families():
     SYSTEM_DEPENDENCIES = COMMON_YUM_DEPENDENCIES + [
         pkg.format(POSTGRES_VERSION) for pkg in [
             "postgresql{0}-server",
             "postgresql{0}",
-            "postgresql{0}-devel",
             "postgresql{0}-pgroonga",
         ]
     ] + REDHAT_VENV_DEPENDENCIES
-    BUILD_TSEARCH_FROM_SOURCE = True
-elif vendor == "Fedora":
+elif "fedora" in os_families():
     SYSTEM_DEPENDENCIES = COMMON_YUM_DEPENDENCIES + [
         pkg.format(POSTGRES_VERSION) for pkg in [
             "postgresql{0}-server",
@@ -246,10 +184,9 @@ elif vendor == "Fedora":
             "msgpack-devel",
         ]
     ] + FEDORA_VENV_DEPENDENCIES
-    BUILD_TSEARCH_FROM_SOURCE = True
     BUILD_PGROONGA_FROM_SOURCE = True
 
-if family == 'redhat':
+if "fedora" in os_families():
     TSEARCH_STOPWORDS_PATH = "/usr/pgsql-%s/share/tsearch_data/" % (POSTGRES_VERSION,)
 else:
     TSEARCH_STOPWORDS_PATH = "/usr/share/postgresql/%s/tsearch_data/" % (POSTGRES_VERSION,)
@@ -262,48 +199,23 @@ REPO_STOPWORDS_PATH = os.path.join(
     "zulip_english.stop",
 )
 
-user_id = os.getuid()
-
-def setup_shell_profile(shell_profile):
-    # type: (str) -> None
-    shell_profile_path = os.path.expanduser(shell_profile)
-
-    def write_command(command):
-        # type: (str) -> None
-        if os.path.exists(shell_profile_path):
-            with open(shell_profile_path, 'r') as shell_profile_file:
-                lines = [line.strip() for line in shell_profile_file.readlines()]
-            if command not in lines:
-                with open(shell_profile_path, 'a+') as shell_profile_file:
-                    shell_profile_file.writelines(command + '\n')
-        else:
-            with open(shell_profile_path, 'w') as shell_profile_file:
-                shell_profile_file.writelines(command + '\n')
-
-    source_activate_command = "source " + os.path.join(VENV_PATH, "bin", "activate")
-    write_command(source_activate_command)
-    if os.path.exists('/srv/zulip'):
-        write_command('cd /srv/zulip')
-
 def install_system_deps():
     # type: () -> None
 
     # By doing list -> set -> list conversion, we remove duplicates.
     deps_to_install = sorted(set(SYSTEM_DEPENDENCIES))
 
-    if family == 'redhat':
+    if "fedora" in os_families():
         install_yum_deps(deps_to_install)
-    elif vendor in ["Debian", "Ubuntu"]:
+    elif "debian" in os_families():
         install_apt_deps(deps_to_install)
     else:
         raise AssertionError("Invalid vendor")
 
-    # For some platforms, there aren't published pgroonga or
-    # tsearch-extra packages available, so we build them from source.
+    # For some platforms, there aren't published pgroonga
+    # packages available, so we build them from source.
     if BUILD_PGROONGA_FROM_SOURCE:
         run_as_root(["./scripts/lib/build-pgroonga"])
-    if BUILD_TSEARCH_FROM_SOURCE:
-        run_as_root(["./scripts/lib/build-tsearch-extras"])
 
 def install_apt_deps(deps_to_install):
     # type: (List[str]) -> None
@@ -329,7 +241,7 @@ def install_yum_deps(deps_to_install):
     # Error: Package: moreutils-0.49-2.el7.x86_64 (epel)
     #        Requires: perl(IPC::Run)
     yum_extra_flags = []  # type: List[str]
-    if vendor == 'RedHat':
+    if vendor == "rhel":
         exitcode, subs_status = subprocess.getstatusoutput("sudo subscription-manager status")
         if exitcode == 1:
             # TODO this might overkill since `subscription-manager` is already
@@ -341,7 +253,7 @@ def install_yum_deps(deps_to_install):
                 print("Unrecognized output. `subscription-manager` might not be available")
 
     run_as_root(["yum", "install", "-y"] + yum_extra_flags + deps_to_install)
-    if vendor in ["CentOS", "RedHat"]:
+    if "rhel" in os_families():
         # This is how a pip3 is installed to /usr/bin in CentOS/RHEL
         # for python35 and later.
         run_as_root(["python36", "-m", "ensurepip"])
@@ -379,7 +291,7 @@ def install_yum_deps(deps_to_install):
                       % (POSTGRES_VERSION,))
 
 def main(options):
-    # type: (Any) -> int
+    # type: (argparse.Namespace) -> NoReturn
 
     # yarn and management commands expect to be run from the root of the
     # project.
@@ -390,7 +302,7 @@ def main(options):
 
     for apt_depedency in SYSTEM_DEPENDENCIES:
         sha_sum.update(apt_depedency.encode('utf8'))
-    if vendor in ["Ubuntu", "Debian"]:
+    if "debian" in os_families():
         sha_sum.update(open('scripts/lib/setup-apt-repo', 'rb').read())
     else:
         # hash the content of setup-yum-repo and build-*
@@ -427,15 +339,13 @@ def main(options):
     ]
     run_as_root(proxy_env + ["scripts/lib/install-node"], sudo_args = ['-H'])
 
+    if not os.access(NODE_MODULES_CACHE_PATH, os.W_OK):
+        run_as_root(["mkdir", "-p", NODE_MODULES_CACHE_PATH])
+        run_as_root(["chown", "%s:%s" % (os.getuid(), os.getgid()), NODE_MODULES_CACHE_PATH])
+
     # This is a wrapper around `yarn`, which we run last since
     # it can often fail due to network issues beyond our control.
     try:
-        # Hack: We remove `node_modules` as root to work around an
-        # issue with the symlinks being improperly owned by root.
-        if os.path.islink("node_modules"):
-            run_as_root(["rm", "-f", "node_modules"])
-        run_as_root(["mkdir", "-p", NODE_MODULES_CACHE_PATH])
-        run_as_root(["chown", "%s:%s" % (user_id, user_id), NODE_MODULES_CACHE_PATH])
         setup_node_modules(prefer_offline=True)
     except subprocess.CalledProcessError:
         print(WARNING + "`yarn install` failed; retrying..." + ENDC)
@@ -450,177 +360,39 @@ def main(options):
     # Install shellcheck.
     run_as_root(["scripts/lib/install-shellcheck"])
 
-    from tools.setup import setup_venvs
     setup_venvs.main()
 
-    activate_this = "/srv/zulip-py3-venv/bin/activate_this.py"
-    exec(open(activate_this).read(), dict(__file__=activate_this))
-
-    setup_shell_profile('~/.bash_profile')
-    setup_shell_profile('~/.zprofile')
-
-    # This needs to happen before anything that imports zproject.settings.
-    run(["scripts/setup/generate_secrets.py", "--development"])
-
     run_as_root(["cp", REPO_STOPWORDS_PATH, TSEARCH_STOPWORDS_PATH])
-
-    # create log directory `zulip/var/log`
-    os.makedirs(LOG_DIR_PATH, exist_ok=True)
-    # create upload directory `var/uploads`
-    os.makedirs(UPLOAD_DIR_PATH, exist_ok=True)
-    # create test upload directory `var/test_upload`
-    os.makedirs(TEST_UPLOAD_DIR_PATH, exist_ok=True)
-    # create coverage directory `var/coverage`
-    os.makedirs(COVERAGE_DIR_PATH, exist_ok=True)
-    # create linecoverage directory `var/node-coverage`
-    os.makedirs(NODE_TEST_COVERAGE_DIR_PATH, exist_ok=True)
-    # create XUnit XML test results directory`var/xunit-test-results`
-    os.makedirs(XUNIT_XML_TEST_RESULTS_DIR_PATH, exist_ok=True)
-
-    # The `build_emoji` script requires `emoji-datasource` package
-    # which we install via npm; thus this step is after installing npm
-    # packages.
-    if not os.path.isdir(EMOJI_CACHE_PATH):
-        run_as_root(["mkdir", EMOJI_CACHE_PATH])
-    run_as_root(["chown", "%s:%s" % (user_id, user_id), EMOJI_CACHE_PATH])
-    run(["tools/setup/emoji/build_emoji"])
-
-    # copy over static files from the zulip_bots package
-    generate_zulip_bots_static_files()
-
-    webfont_paths = ["tools/setup/generate-custom-icon-webfont", "static/icons/fonts/template.hbs"]
-    webfont_paths += glob.glob('static/assets/icons/*')
-    if file_or_package_hash_updated(webfont_paths, "webfont_files_hash", options.is_force):
-        run(["tools/setup/generate-custom-icon-webfont"])
-    else:
-        print("No need to run `tools/setup/generate-custom-icon-webfont`.")
-
-    build_pygments_data_paths = ["tools/setup/build_pygments_data", "tools/setup/lang.json"]
-    from pygments import __version__ as pygments_version
-    if file_or_package_hash_updated(build_pygments_data_paths, "build_pygments_data_hash", options.is_force,
-                                    [pygments_version]):
-        run(["tools/setup/build_pygments_data"])
-    else:
-        print("No need to run `tools/setup/build_pygments_data`.")
-
-    update_authors_json_paths = ["tools/update-authors-json", "zerver/tests/fixtures/authors.json"]
-    if file_or_package_hash_updated(update_authors_json_paths, "update_authors_json_hash", options.is_force):
-        run(["tools/update-authors-json", "--use-fixture"])
-    else:
-        print("No need to run `tools/update-authors-json`.")
-
-    email_source_paths = ["tools/inline-email-css", "templates/zerver/emails/email.css"]
-    email_source_paths += glob.glob('templates/zerver/emails/*.source.html')
-    if file_or_package_hash_updated(email_source_paths, "last_email_source_files_hash", options.is_force):
-        run(["tools/inline-email-css"])
-    else:
-        print("No need to run `tools/inline-email-css`.")
 
     if is_circleci or (is_travis and not options.is_production_travis):
         run_as_root(["service", "rabbitmq-server", "restart"])
         run_as_root(["service", "redis-server", "restart"])
         run_as_root(["service", "memcached", "restart"])
         run_as_root(["service", "postgresql", "restart"])
-    elif family == 'redhat':
+    elif "fedora" in os_families():
+        # These platforms don't enable and start services on
+        # installing their package, so we do that here.
         for service in ["postgresql-%s" % (POSTGRES_VERSION,), "rabbitmq-server", "memcached", "redis"]:
             run_as_root(["systemctl", "enable", service], sudo_args = ['-H'])
             run_as_root(["systemctl", "start", service], sudo_args = ['-H'])
-    if not options.is_production_travis:
-        # The following block is skipped for the production Travis
-        # suite, because that suite doesn't make use of these elements
-        # of the development environment (it just uses the development
-        # environment to build a release tarball).
 
-        # Need to set up Django before using template_database_status
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "zproject.settings")
-        import django
-        django.setup()
-
-        from zerver.lib.test_fixtures import template_database_status, run_db_migrations, \
-            destroy_leaked_test_databases
-
-        try:
-            from zerver.lib.queue import SimpleQueueClient
-            SimpleQueueClient()
-            rabbitmq_is_configured = True
-        except Exception:
-            rabbitmq_is_configured = False
-
-        if options.is_force or not rabbitmq_is_configured:
-            run(["scripts/setup/configure-rabbitmq"])
-        else:
-            print("RabbitMQ is already configured.")
-
-        migration_status_path = os.path.join(UUID_VAR_PATH, "migration_status_dev")
-        dev_template_db_status = template_database_status(
-            migration_status=migration_status_path,
-            settings="zproject.settings",
-            database_name="zulip",
-        )
-        if options.is_force or dev_template_db_status == 'needs_rebuild':
-            run(["tools/setup/postgres-init-dev-db"])
-            run(["tools/do-destroy-rebuild-database"])
-        elif dev_template_db_status == 'run_migrations':
-            run_db_migrations('dev')
-        elif dev_template_db_status == 'current':
-            print("No need to regenerate the dev DB.")
-
-        test_template_db_status = template_database_status()
-        if options.is_force or test_template_db_status == 'needs_rebuild':
-            run(["tools/setup/postgres-init-test-db"])
-            run(["tools/do-destroy-rebuild-test-database"])
-        elif test_template_db_status == 'run_migrations':
-            run_db_migrations('test')
-        elif test_template_db_status == 'current':
-            print("No need to regenerate the test DB.")
-
-        # Consider updating generated translations data: both `.mo`
-        # files and `language-options.json`.
-        paths = ['zerver/management/commands/compilemessages.py']
-        paths += glob.glob('locale/*/LC_MESSAGES/*.po')
-        paths += glob.glob('locale/*/translations.json')
-
-        if file_or_package_hash_updated(paths, "last_compilemessages_hash", options.is_force):
-            run(["./manage.py", "compilemessages"])
-        else:
-            print("No need to run `manage.py compilemessages`.")
-
-        destroyed = destroy_leaked_test_databases()
-        if destroyed:
-            print("Dropped %s stale test databases!" % (destroyed,))
-
-    run(["scripts/lib/clean-unused-caches"])
-
-    # Keeping this cache file around can cause eslint to throw
-    # random TypeErrors when new/updated dependencies are added
-    if os.path.isfile('.eslintcache'):
-        # Remove this block when
-        # https://github.com/eslint/eslint/issues/11639 is fixed
-        # upstream.
-        os.remove('.eslintcache')
-
-    # Clean up the root of the `var/` directory for various
-    # testing-related files that we have migrated to
-    # `var/<uuid>/test-backend`.
-    print("Cleaning var/ directory files...")
-    var_paths = glob.glob('var/test*')
-    var_paths.append('var/bot_avatar')
-    for path in var_paths:
-        try:
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            else:
-                os.remove(path)
-        except FileNotFoundError:
-            pass
-
-    version_file = os.path.join(UUID_VAR_PATH, 'provision_version')
-    print('writing to %s\n' % (version_file,))
-    open(version_file, 'w').write(PROVISION_VERSION + '\n')
-
-    print()
-    print(OKBLUE + "Zulip development environment setup succeeded!" + ENDC)
-    return 0
+    # If we imported modules after activating the virtualenv in this
+    # Python process, they could end up mismatching with modules we’ve
+    # already imported from outside the virtualenv.  That seems like a
+    # bad idea, and empirically it can cause Python to segfault on
+    # certain cffi-related imports.  Instead, start a new Python
+    # process inside the virtualenv.
+    activate_this = "/srv/zulip-py3-venv/bin/activate_this.py"
+    provision_inner = os.path.join(ZULIP_PATH, "tools", "lib", "provision_inner.py")
+    exec(open(activate_this).read(), dict(__file__=activate_this))
+    os.execvp(
+        provision_inner,
+        [
+            provision_inner,
+            *(["--force"] if options.is_force else []),
+            *(["--production-travis"] if options.is_production_travis else []),
+        ]
+    )
 
 if __name__ == "__main__":
     description = ("Provision script to install Zulip")
@@ -635,4 +407,4 @@ if __name__ == "__main__":
                         help="Provision for Travis with production settings.")
 
     options = parser.parse_args()
-    sys.exit(main(options))
+    main(options)

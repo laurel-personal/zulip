@@ -133,9 +133,8 @@ else:
 # Required for compatibility python versions.
 if not os.path.exists(os.path.dirname(pid_file_path)):
     os.makedirs(os.path.dirname(pid_file_path))
-pid_file = open(pid_file_path, 'w+')
-pid_file.write(str(os.getpgrp()) + "\n")
-pid_file.close()
+with open(pid_file_path, 'w+') as f:
+    f.write(str(os.getpgrp()) + "\n")
 
 # Pass --nostatic because we configure static serving ourselves in
 # zulip/urls.py.
@@ -303,12 +302,9 @@ class CombineHandler(BaseWebsocketHandler):
             self._headers = httputil.HTTPHeaders()  # clear tornado default header
 
             for header, v in response.headers.get_all():
-                if header != 'Content-Length':
-                    # some header appear multiple times, eg 'Set-Cookie'
-                    self.add_header(header, v)
+                # some header appear multiple times, eg 'Set-Cookie'
+                self.add_header(header, v)
             if response.body:
-                # rewrite Content-Length Header by the response
-                self.set_header('Content-Length', len(response.body))
                 self.write(response.body)
         self.finish()
 

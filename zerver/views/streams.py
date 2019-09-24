@@ -180,8 +180,16 @@ def update_stream_backend(
         do_change_stream_invite_only(stream, is_private, history_public_to_subscribers)
     return json_success()
 
-def list_subscriptions_backend(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
-    return json_success({"subscriptions": gather_subscriptions(user_profile)[0]})
+@has_request_variables
+def list_subscriptions_backend(
+    request: HttpRequest,
+    user_profile: UserProfile,
+    include_subscribers: bool=REQ(validator=check_bool, default=False),
+) -> HttpResponse:
+    subscribed, _ = gather_subscriptions(
+        user_profile, include_subscribers=include_subscribers
+    )
+    return json_success({"subscriptions": subscribed})
 
 FuncKwargPair = Tuple[Callable[..., HttpResponse], Dict[str, Union[int, Iterable[Any]]]]
 
@@ -425,14 +433,15 @@ def add_subscriptions_backend(
                     realm=user_profile.realm,
                     sender=sender,
                     stream=stream,
-                    topic=_('stream events'),
-                    content=_('Stream created by @_**%s|%d**.') % (
-                        user_profile.full_name, user_profile.id)
+                    topic=Realm.STREAM_EVENTS_NOTIFICATION_TOPIC,
+                    content=_('Stream created by @_**%(user_name)s|%(user_id)d**.') % {
+                        'user_name': user_profile.full_name,
+                        'user_id': user_profile.id}
                 )
             )
 
     if len(notifications) > 0:
-        do_send_messages(notifications)
+        do_send_messages(notifications, mark_as_read=[user_profile.id])
 
     result["subscribed"] = dict(result["subscribed"])
     result["already_subscribed"] = dict(result["already_subscribed"])
@@ -470,7 +479,8 @@ def get_streams_backend(
 
 @has_request_variables
 def get_topics_backend(request: HttpRequest, user_profile: UserProfile,
-                       stream_id: int=REQ(converter=to_non_negative_int)) -> HttpResponse:
+                       stream_id: int=REQ(converter=to_non_negative_int,
+                                          path_only=True)) -> HttpResponse:
     (stream, recipient, sub) = access_stream_by_id(user_profile, stream_id)
 
     result = get_topic_history_for_stream(

@@ -1,3 +1,5 @@
+var autosize = require('autosize');
+
 var compose_actions = (function () {
 
 var exports = {};
@@ -105,7 +107,7 @@ function clear_box() {
 }
 
 exports.autosize_message_content = function () {
-    $("#compose-textarea").autosize({
+    autosize($("#compose-textarea"), {
         callback: function () {
             compose_actions.maybe_scroll_up_selected_message();
         },
@@ -129,6 +131,7 @@ exports.complete_starting_tasks = function (msg_type, opts) {
     exports.decorate_stream_bar(opts.stream);
     $(document).trigger($.Event('compose_started.zulip', opts));
     resize.resize_bottom_whitespace();
+    exports.update_placeholder_text(opts);
 };
 
 // In an attempt to decrease mixing, make the composebox's
@@ -194,6 +197,11 @@ function same_recipient_as_before(msg_type, opts) {
               opts.private_message_recipient === compose_state.recipient());
 }
 
+exports.update_placeholder_text = function (opts) {
+    var placeholder_text = compose_ui.compute_placeholder_text(opts);
+    $('#compose-textarea').attr('placeholder', placeholder_text);
+};
+
 exports.start = function (msg_type, opts) {
     exports.autosize_message_content();
 
@@ -211,6 +219,11 @@ exports.start = function (msg_type, opts) {
         opts.trigger === "new topic button") {
         opts.topic = '';
         opts.private_message_recipient = '';
+    }
+
+    var subbed_streams = stream_data.subscribed_subs();
+    if (subbed_streams.length === 1 && (opts.trigger === "new topic button" || opts.trigger === "compose_hotkey" && msg_type === "stream")) {
+        opts.stream = subbed_streams[0].name;
     }
 
     if (compose_state.composing() && !same_recipient_as_before(msg_type, opts)) {
@@ -301,7 +314,9 @@ exports.respond_to_message = function (opts) {
         return;
     }
 
-    unread_ops.notify_server_message_read(message);
+    if (current_msg_list.can_mark_messages_read()) {
+        unread_ops.notify_server_message_read(message);
+    }
 
     var stream = '';
     var topic = '';
@@ -415,7 +430,7 @@ exports.quote_and_reply = function (opts) {
 
     function replace_content(raw_content) {
         compose_ui.replace_syntax('[Quoting…]', '```quote\n' + raw_content + '\n```', textarea);
-        $("#compose-textarea").trigger("autosize.resize");
+        autosize.update($('#compose-textarea'));
     }
 
     if (message && message.raw_content) {

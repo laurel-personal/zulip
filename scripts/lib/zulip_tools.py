@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import datetime
+import functools
 import hashlib
 import logging
 import os
@@ -16,9 +17,7 @@ import json
 import uuid
 import configparser
 
-if False:
-    # See https://zulip.readthedocs.io/en/latest/testing/mypy.html#mypy-in-production-scripts
-    from typing import Sequence, Set, Any, Dict, List
+from typing import Sequence, Set, Any, Dict, List
 
 DEPLOYMENTS_DIR = "/home/zulip/deployments"
 LOCK_DIR = os.path.join(DEPLOYMENTS_DIR, "lock")
@@ -81,11 +80,9 @@ def parse_cache_script_args(description):
     return args
 
 def get_deploy_root() -> str:
-    # This calls realpath twice to handle both symlinks and users
-    # running our scripts with relative paths from a current working
-    # directory of `scripts/`.
-    return os.path.realpath(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.realpath(__file__)))))
+    return os.path.realpath(
+        os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    )
 
 def get_deployment_version(extract_path):
     # type: (str) -> str
@@ -341,54 +338,46 @@ def may_be_perform_purging(dirs_to_purge, dirs_to_keep, dir_type, dry_run, verbo
         if verbose:
             print("Keeping used %s: %s" % (dir_type, directory))
 
-def parse_lsb_release():
+@functools.lru_cache(None)
+def parse_os_release():
     # type: () -> Dict[str, str]
+    """
+    Example of the useful subset of the data:
+    {
+     'ID': 'ubuntu',
+     'VERSION_ID': '18.04',
+     'NAME': 'Ubuntu',
+     'VERSION': '18.04.3 LTS (Bionic Beaver)',
+     'PRETTY_NAME': 'Ubuntu 18.04.3 LTS',
+    }
+
+    VERSION_CODENAME (e.g. 'bionic') is nice and human-readable, but
+    we avoid using it, as it is not available on RHEL-based platforms.
+    """
     distro_info = {}  # type: Dict[str, str]
-    if os.path.exists("/etc/redhat-release"):
-        with open('/etc/redhat-release', 'r') as fp:
-            info = fp.read().strip().split(' ')
-        vendor = info[0]
-        if vendor == 'CentOS':
-            # E.g. "CentOS Linux release 7.5.1804 (Core)"
-            codename = vendor.lower() + info[3][0]
-        elif vendor == 'Fedora':
-            # E.g. "Fedora release 29 (Twenty Nine)"
-            codename = vendor.lower() + info[2]
-        elif vendor == 'Red':
-            # E.g. "Red Hat Enterprise Linux Server release 7.6 (Maipo)"
-            vendor = 'RedHat'
-            codename = 'rhel' + info[6][0]  # 7
-        distro_info = dict(
-            DISTRIB_CODENAME=codename,
-            DISTRIB_ID=vendor,
-            DISTRIB_FAMILY='redhat',
-        )
-        return distro_info
-    try:
-        # For performance reasons, we read /etc/lsb-release directly,
-        # rather than using the lsb_release command; this saves ~50ms
-        # in several places in provisioning and the installer
-        with open('/etc/lsb-release', 'r') as fp:
-            data = [line.strip().split('=') for line in fp]
-        for k, v in data:
-            if k not in ['DISTRIB_CODENAME', 'DISTRIB_ID']:
-                # We only return to the caller the values that we get
-                # from lsb_release in the exception code path.
+    with open('/etc/os-release', 'r') as fp:
+        for line in fp:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                # The line may be blank or a comment, see:
+                # https://www.freedesktop.org/software/systemd/man/os-release.html
                 continue
-            distro_info[k] = v
-        distro_info['DISTRIB_FAMILY'] = 'debian'
-    except FileNotFoundError:
-        # Unfortunately, Debian stretch doesn't yet have an
-        # /etc/lsb-release, so we instead fetch the pieces of data
-        # that we use from the `lsb_release` command directly.
-        vendor = subprocess_text_output(["lsb_release", "-is"])
-        codename = subprocess_text_output(["lsb_release", "-cs"])
-        distro_info = dict(
-            DISTRIB_CODENAME=codename,
-            DISTRIB_ID=vendor,
-            DISTRIB_FAMILY='debian',
-        )
+            k, v = line.split('=', 1)
+            [distro_info[k]] = shlex.split(v)
     return distro_info
+
+@functools.lru_cache(None)
+def os_families() -> Set[str]:
+    """
+    Known families:
+    debian (includes: debian, ubuntu)
+    ubuntu (includes: ubuntu)
+    fedora (includes: fedora, rhel, centos)
+    rhel (includes: rhel, centos)
+    centos (includes: centos)
+    """
+    distro_info = parse_os_release()
+    return {distro_info["ID"], *distro_info.get("ID_LIKE", "").split()}
 
 def file_or_package_hash_updated(paths, hash_name, is_force, package_versions=[]):
     # type: (List[str], str, bool, List[str]) -> bool
@@ -472,6 +461,9 @@ def get_or_create_dev_uuid_var_path(path: str) -> str:
     absolute_path = '{}/{}'.format(get_dev_uuid_var_path(), path)
     os.makedirs(absolute_path, exist_ok=True)
     return absolute_path
+
+def is_vagrant_env_host(path: str) -> bool:
+    return '.vagrant' in os.listdir(path)
 
 if __name__ == '__main__':
     cmd = sys.argv[1]

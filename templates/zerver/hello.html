@@ -5,7 +5,7 @@
 <!-- Bootstrap 2.3.2-->
 <script src="https://stackpath.bootstrapcdn.com/twitter-bootstrap/2.3.2/js/bootstrap.min.js"></script>
 
-{{ render_bundle('landing-page') }}
+{{ bundle('landing-page') }}
 <style>
     .portico-page {
     padding-bottom: 0px;
@@ -45,7 +45,7 @@
                             <div class="item active">
                                 <div class="item-inner">
 
-                                    <button href="#tour-carousel" data-slide="next" type="button" name="button" class="start-button">Take the tour</button>
+                                    <button data-target="#tour-carousel" data-slide="next" type="button" name="button" class="start-button">Take the tour</button>
                                     <img src="/static/images/story-tutorial/zulip-topic-blurred.png" alt="" class="start-image">
                                 </div>
                             </div>
@@ -125,10 +125,9 @@
                             <div class="item">
                                 <div class="item-inner">
                                     <p class="tour-item-header tour-item-header-top-push tour-item-header-centered">Zulip Free is free for an unlimited number of users.</p>
-                                    <button href="/plans" type="button" name="button"
-                                      class="call-to-action carousel-link-button">
+                                    <a href="/plans" class="call-to-action">
                                         {{ _('See plans and pricing') }}
-                                    </button>
+                                    </a>
                                     <div class="other-resources">
                                         <div class="other-resources-section">
                                             <a href="/why-zulip"><img src="/static/images/landing-page/organised.svg" alt=""></a>
@@ -529,25 +528,24 @@
     <div class="padded-content call-to-action-bottom">
         <h1>Experience Zulip today!</h1>
         {% if root_domain_landing_page %}
-        <a href="{{ url('plans') }}">
-            <button href="" class="download-button" type="button"
-              name="button">{{ _('See plans and pricing') }}</button>
+        <a href="{{ url('plans') }}" class="download-button button">
+            {{ _('See plans and pricing') }}
         </a>
         {% endif %}
         {% if register_link_disabled %}
         {% elif only_sso %}
-        <a href="{{ url('login-sso') }}">
-            <button href="" type="button" name="button">{{ _('Log in now') }}</button>
+        <a href="{{ url('login-sso') }}" class="button">
+            {{ _('Log in now') }}
         </a>
         {% else %}
-        <a href="{{ url('register') }}">
-            <button href="" type="button" name="button">{{ _('Sign up now') }}</button>
+        <a href="{{ url('register') }}" class="button">
+            {{ _('Sign up now') }}
         </a>
         {% endif %}
-        <div class="atlassian-migration">
+        <p class="atlassian-migration">
             Migrating from HipChat or Stride?
             Check out our <a href="/atlassian">Atlassian migration guide</a>.
-        </div>
+        </p>
         <div class="zulip-octopus"></div>
     </div>
 </div>

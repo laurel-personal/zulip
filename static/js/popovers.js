@@ -206,6 +206,7 @@ function render_user_info_popover(user, popover_element, is_sender_popover, priv
             user_avatar: "avatar/" + user.email,
             user_is_guest: user.is_guest,
         }),
+        html: true,
         trigger: "manual",
         top_offset: 100,
         fix_positions: true,
@@ -266,6 +267,7 @@ function show_mobile_message_buttons_popover(element) {
         content: render_mobile_message_buttons_popover_content({
             is_in_private_narrow: narrow_state.narrowed_to_pms(),
         }),
+        html: true,
         trigger: "manual",
     });
     $element.popover("show");
@@ -383,6 +385,7 @@ function show_user_group_info_popover(element, group, message) {
             placement: calculate_info_popover_placement(popover_size, elt),
             template: render_user_group_info_popover({class: "message-info-popover"}),
             content: render_user_group_info_popover_content(args),
+            html: true,
             trigger: "manual",
         });
         elt.popover("show");
@@ -481,6 +484,7 @@ exports.toggle_actions_popover = function (element, id) {
             placement: message_viewport.height() - ypos < 220 ? 'top' : 'bottom',
             title: "",
             content: render_actions_popover_content(args),
+            html: true,
             trigger: "manual",
         });
         elt.popover("show");
@@ -504,6 +508,7 @@ exports.render_actions_remind_popover = function (element, id) {
             placement: message_viewport.height() - ypos < 220 ? 'top' : 'bottom',
             title: "",
             content: render_remind_me_popover_content(args),
+            html: true,
             trigger: "manual",
         });
         elt.popover("show");
@@ -855,13 +860,17 @@ exports.register_click_handlers = function () {
 
         if (String(current_user_sidebar_user_id) === user_id) {
             // If the popover is already shown, clicking again should toggle it.
-            popovers.hide_all();
+            // We don't want to hide the sidebars on smaller browser windows.
+            popovers.hide_all_except_sidebars();
             return;
         }
         popovers.hide_all();
 
         if (userlist_placement === "right") {
             popovers.show_userlist_sidebar();
+        } else {
+            // Maintain the same behavior when displaying with the streamlist.
+            stream_popover.show_streamlist_sidebar();
         }
 
         var user = people.get_person_from_user_id(user_id);
@@ -897,8 +906,8 @@ exports.register_click_handlers = function () {
     });
 
     $('body').on('click', '.reminder_button', function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
-        popovers.render_actions_remind_popover($(".selected_message .actions_hover")[0], msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        popovers.render_actions_remind_popover($(".selected_message .actions_hover")[0], message_id);
         e.stopPropagation();
         e.preventDefault();
     });
@@ -963,8 +972,8 @@ exports.register_click_handlers = function () {
         e.preventDefault();
     });
     $('body').on('click', '.popover_toggle_collapse', function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
-        var row = current_msg_list.get_row(msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        var row = current_msg_list.get_row(message_id);
         var message = current_msg_list.get(rows.id(row));
 
         popovers.hide_actions_popover();
@@ -981,16 +990,16 @@ exports.register_click_handlers = function () {
         e.preventDefault();
     });
     $('body').on('click', '.popover_edit_message', function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
-        var row = current_msg_list.get_row(msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        var row = current_msg_list.get_row(message_id);
         popovers.hide_actions_popover();
         message_edit.start(row);
         e.stopPropagation();
         e.preventDefault();
     });
     $('body').on('click', '.view_edit_history', function (e) {
-        var msgid = $(e.currentTarget).data('msgid');
-        var row = current_msg_list.get_row(msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        var row = current_msg_list.get_row(message_id);
         var message = current_msg_list.get(rows.id(row));
         var message_history_cancel_btn = $('#message-history-cancel');
 
@@ -1022,9 +1031,9 @@ exports.register_click_handlers = function () {
     });
 
     $('body').on('click', '.delete_message', function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
+        var message_id = $(e.currentTarget).data('message-id');
         popovers.hide_actions_popover();
-        message_edit.delete_message(msgid);
+        message_edit.delete_message(message_id);
         e.stopPropagation();
         e.preventDefault();
     });

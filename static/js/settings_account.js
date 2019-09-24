@@ -1,5 +1,6 @@
 var render_settings_custom_user_profile_field = require("../templates/settings/custom_user_profile_field.hbs");
 var render_settings_dev_env_email_access = require('../templates/settings/dev_env_email_access.hbs');
+var render_settings_api_key_modal = require('../templates/settings/api_key_modal.hbs');
 
 var settings_account = (function () {
 
@@ -28,9 +29,18 @@ exports.update_full_name = function (new_full_name) {
     }
 };
 
+exports.user_can_change_name = function () {
+    if (page_params.is_admin) {
+        return true;
+    }
+    if (page_params.realm_name_changes_disabled || page_params.server_name_changes_disabled) {
+        return false;
+    }
+    return true;
+};
+
 exports.update_name_change_display = function () {
-    if ((page_params.realm_name_changes_disabled || page_params.server_name_changes_disabled)
-        && !page_params.is_admin) {
+    if (!exports.user_can_change_name()) {
         $('#full_name').attr('disabled', 'disabled');
         $(".change_name_tooltip").show();
     } else {
@@ -65,14 +75,28 @@ function settings_change_error(message, xhr) {
     ui_report.error(message, xhr, $('#account-settings-status').expectOne());
 }
 
+function update_custom_profile_field(field, method) {
+    var field_id;
+    if (method === channel.del) {
+        field_id = field;
+    } else {
+        field_id = field.id;
+    }
+
+    var spinner = $('.custom_user_field[data-field-id="' + field_id +
+        '"] .custom-field-status').expectOne();
+    loading.make_indicator(spinner, {text: 'Saving ...'});
+    settings_ui.do_settings_change(method, "/json/users/me/profile_data",
+                                   {data: JSON.stringify([field])}, spinner);
+}
+
 function update_user_custom_profile_fields(fields, method) {
     if (method === undefined) {
         blueslip.error("Undefined method in update_user_custom_profile_fields");
     }
-    var spinner = $("#custom-field-status").expectOne();
-    loading.make_indicator(spinner, {text: 'Saving ...'});
-    settings_ui.do_settings_change(method, "/json/users/me/profile_data",
-                                   {data: JSON.stringify(fields)}, spinner);
+    _.each(fields, function (field) {
+        update_custom_profile_field(field, method);
+    });
 }
 
 exports.append_custom_profile_fields = function (element_id, user_id) {
@@ -131,6 +155,18 @@ exports.initialize_custom_date_type_fields = function (element_id) {
     $(element_id).find(".custom_user_field .datepicker").flatpickr({
         altInput: true,
         altFormat: "F j, Y"});
+
+    $(element_id).find(".custom_user_field .datepicker").on("mouseenter", function () {
+        if ($(this).val().length <= 0) {
+            $(this).parent().find(".remove_date").hide();
+        } else {
+            $(this).parent().find(".remove_date").show();
+        }
+    });
+
+    $(element_id).find(".custom_user_field .remove_date").on("click", function () {
+        $(this).parent().find(".custom_user_field_value").val("");
+    });
 };
 
 exports.initialize_custom_user_type_fields = function (element_id, user_id, is_editable,
@@ -219,68 +255,70 @@ exports.set_up = function () {
     // Add custom profile fields elements to user account settings.
     exports.add_custom_profile_fields_to_settings();
     $("#account-settings-status").hide();
-    $("#api_key_value").text("");
-    $("#get_api_key_box").hide();
-    $("#show_api_key_box").hide();
-    $("#api_key_button_box").show();
 
-    $('#api_key_button').click(function () {
-        if (page_params.realm_password_auth_enabled !== false) {
-            $("#get_api_key_box").show();
-        } else {
+    var setup_api_key_modal = _.once(function () {
+        $('.account-settings-form').append(render_settings_api_key_modal());
+        $("#api_key_value").text("");
+        $("#show_api_key").hide();
+
+        if (page_params.realm_password_auth_enabled === false) {
             // Skip the password prompt step, since the user doesn't have one.
             $("#get_api_key_button").click();
         }
-        $("#api_key_button_box").hide();
+
+        $("#get_api_key_button").on("click", function (e) {
+            var data = {};
+            e.preventDefault();
+            e.stopPropagation();
+
+            data.password = $("#get_api_key_password").val();
+            channel.post({
+                url: '/json/fetch_api_key',
+                data: data,
+                success: function (data) {
+                    $("#get_api_key_password").val("");
+                    $("#api_key_value").text(data.api_key);
+                    // The display property on the error bar is set to important
+                    // so instead of making display: none !important we just
+                    // remove it.
+                    $('#api_key_status').remove();
+                    $("#password_confirmation").hide();
+                    $("#show_api_key").show();
+                },
+                error: function (xhr) {
+                    ui_report.error(i18n.t("Error"), xhr, $('#api_key_status').expectOne());
+                    $("#show_api_key").hide();
+                    $("#api_key_modal").show();
+                },
+            });
+        });
+
+        $("#show_api_key").on("click", "button.regenerate_api_key", function (e) {
+            channel.post({
+                url: '/json/users/me/api_key/regenerate',
+                success: function (data) {
+                    $('#api_key_value').text(data.api_key);
+                },
+                error: function (xhr) {
+                    $('#user_api_key_error').text(JSON.parse(xhr.responseText).msg).show();
+                },
+            });
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        $("#download_zuliprc").on("click", function () {
+            var data = settings_bots.generate_zuliprc_content(people.my_current_email(),
+                                                              $("#api_key_value").text());
+            $(this).attr("href", settings_bots.encode_zuliprc_as_uri(data));
+        });
     });
 
-    $("#get_api_key_box").hide();
-    $("#show_api_key_box").hide();
-
-    $("#get_api_key_button").on("click", function (e) {
-        var data = {};
+    $('#api_key_button').click(function (e) {
+        setup_api_key_modal();
+        overlays.open_modal('api_key_modal');
         e.preventDefault();
         e.stopPropagation();
-
-        data.password = $("#get_api_key_password").val();
-        channel.post({
-            url: '/json/fetch_api_key',
-            dataType: 'json',
-            data: data,
-            success: function (data) {
-                var settings_status = $('#account-settings-status').expectOne();
-
-                $("#get_api_key_password").val("");
-                $("#api_key_value").text(data.api_key);
-                $("#show_api_key_box").show();
-                $("#get_api_key_box").hide();
-                settings_status.hide();
-            },
-            error: function (xhr) {
-                ui_report.error(i18n.t("Error getting API key"), xhr, $('#account-settings-status').expectOne());
-                $("#show_api_key_box").hide();
-                $("#get_api_key_box").show();
-            },
-        });
-    });
-
-    $("#show_api_key_box").on("click", "button.regenerate_api_key", function () {
-        channel.post({
-            url: '/json/users/me/api_key/regenerate',
-            idempotent: true,
-            success: function (data) {
-                $('#api_key_value').text(data.api_key);
-            },
-            error: function (xhr) {
-                $('#user_api_key_error').text(JSON.parse(xhr.responseText).msg).show();
-            },
-        });
-    });
-
-    $("#download_zuliprc").on("click", function () {
-        var data = settings_bots.generate_zuliprc_content(people.my_current_email(),
-                                                          $("#api_key_value").text());
-        $(this).attr("href", settings_bots.encode_zuliprc_as_uri(data));
     });
 
     function clear_password_change() {
@@ -295,8 +333,7 @@ exports.set_up = function () {
     $("#change_full_name").on('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
-        if (!page_params.realm_name_changes_disabled && !page_params.server_name_changes_disabled
-        || page_params.is_admin) {
+        if (exports.user_can_change_name()) {
             $('#change_full_name_modal').find("input[name='full_name']").val(page_params.full_name);
             overlays.open_modal('change_full_name_modal');
         }
@@ -404,6 +441,8 @@ exports.set_up = function () {
                 overlays.close_modal('change_email_modal');
             },
             error_msg_element: change_email_error,
+            success_msg: i18n.t('Check your email (%s) to confirm the new address.').replace(
+                "%s", data.email),
         };
         settings_ui.do_settings_change(channel.patch, '/json/settings', data,
                                        $('#account-settings-status').expectOne(), opts);
@@ -427,16 +466,15 @@ exports.set_up = function () {
         $("#deactivate_self_modal").modal("show");
     });
 
-    $('#settings_page').on('click', '.custom_user_field .remove_date', function (e) {
+    $('#account-settings').on('click', '.custom_user_field .remove_date', function (e) {
         e.preventDefault();
         e.stopPropagation();
         var field = $(e.target).closest('.custom_user_field').expectOne();
         var field_id = parseInt($(field).attr("data-field-id"), 10);
-        field.find(".custom_user_field_value").val("");
         update_user_custom_profile_fields([field_id], channel.del);
     });
 
-    $('#settings_page').on('change', '.custom_user_field_value', function (e) {
+    $('#account-settings').on('change', '.custom_user_field_value', function (e) {
         var fields = [];
         var value = $(this).val();
         var field_id = parseInt($(e.target).closest('.custom_user_field').attr("data-field-id"), 10);

@@ -36,7 +36,7 @@ import zerver.views.realm
 import zerver.views.digest
 import zerver.views.messages
 from zerver.context_processors import latest_info_context
-import zerver.views.public_export
+import zerver.views.realm_export
 
 from zerver.lib.rest import rest_dispatch
 
@@ -73,10 +73,10 @@ v1_api_and_json_patterns = [
         {'PATCH': 'zerver.views.realm.update_realm'}),
 
     # Returns a 204, used by desktop app to verify connectivity status
-    url(r'generate_204$', zerver.views.registration.generate_204,
+    url(r'^generate_204$', zerver.views.registration.generate_204,
         name='zerver.views.registration.generate_204'),
 
-    url(r'realm/subdomain/(?P<subdomain>\S+)$', zerver.views.realm.check_subdomain_available,
+    url(r'^realm/subdomain/(?P<subdomain>\S+)$', zerver.views.realm.check_subdomain_available,
         name='zerver.views.realm.check_subdomain_available'),
 
     # realm/domains -> zerver.views.realm_domains
@@ -398,9 +398,12 @@ v1_api_and_json_patterns = [
     url(r'^calls/create$', rest_dispatch,
         {'GET': 'zerver.views.video_calls.get_zoom_url'}),
 
-    # Used for public-only realm exporting
+    # export/realm -> zerver.views.realm_export
     url(r'^export/realm$', rest_dispatch,
-        {'POST': 'zerver.views.public_export.public_only_realm_export'}),
+        {'POST': 'zerver.views.realm_export.export_realm',
+         'GET': 'zerver.views.realm_export.get_realm_exports'}),
+    url(r'^export/realm/(?P<export_id>.*)$', rest_dispatch,
+        {'DELETE': 'zerver.views.realm_export.delete_realm_export'}),
 ]
 
 # These views serve pages (HTML). As such, their internationalization
@@ -420,16 +423,16 @@ i18n_urls = [
     url(r'^accounts/login/jwt/$', zerver.views.auth.remote_user_jwt, name='login-jwt'),
     url(r'^accounts/login/social/([\w,-]+)$', zerver.views.auth.start_social_login,
         name='login-social'),
+    # Backwards-compatibility (legacy) Google auth URL for the mobile
+    # apps; see https://github.com/zulip/zulip/issues/13081 for
+    # background.  We can remove this once older versions of the
+    # mobile app are no longer present in the wild.
+    url(r'^accounts/login/(google)/$', zerver.views.auth.start_social_login,
+        name='login-social'),
+
     url(r'^accounts/register/social/([\w,-]+)$',
         zerver.views.auth.start_social_signup,
         name='signup-social'),
-    url(r'^accounts/login/google/$', zerver.views.auth.start_google_oauth2,
-        name='zerver.views.auth.start_google_oauth2'),
-    url(r'^accounts/login/google/send/$',
-        zerver.views.auth.send_oauth_request_to_google,
-        name='zerver.views.auth.send_oauth_request_to_google'),
-    url(r'^accounts/login/google/done/$', zerver.views.auth.finish_google_oauth2,
-        name='zerver.views.auth.finish_google_oauth2'),
     url(r'^accounts/login/subdomain/([^/]+)$', zerver.views.auth.log_into_subdomain,
         name='zerver.views.auth.log_into_subdomain'),
     url(r'^accounts/login/local/$', zerver.views.auth.dev_direct_login,
@@ -438,14 +441,14 @@ i18n_urls = [
     # used for URL resolution.  The second here is to allow
     # reverse("django.contrib.auth.views.login") in templates to
     # return `/accounts/login/`.
-    url(r'^accounts/login/', zerver.views.auth.login_page,
+    url(r'^accounts/login/$', zerver.views.auth.login_page,
         {'template_name': 'zerver/login.html'}, name='zerver.views.auth.login_page'),
-    url(r'^accounts/login/', login, {'template_name': 'zerver/login.html'},
+    url(r'^accounts/login/$', login, {'template_name': 'zerver/login.html'},
         name='django.contrib.auth.views.login'),
-    url(r'^accounts/logout/', zerver.views.auth.logout_then_login,
+    url(r'^accounts/logout/$', zerver.views.auth.logout_then_login,
         name='zerver.views.auth.logout_then_login'),
 
-    url(r'^accounts/webathena_kerberos_login/',
+    url(r'^accounts/webathena_kerberos_login/$',
         zerver.views.zephyr.webathena_kerberos_login,
         name='zerver.views.zephyr.webathena_kerberos_login'),
 
@@ -461,7 +464,7 @@ i18n_urls = [
         name='django.contrib.auth.views.password_reset_confirm'),
     url(r'^accounts/password/done/$', password_reset_complete,
         {'template_name': 'zerver/reset_done.html'}),
-    url(r'^accounts/deactivated/',
+    url(r'^accounts/deactivated/$',
         zerver.views.auth.show_deactivation_notice,
         name='zerver.views.auth.show_deactivation_notice'),
 
@@ -469,27 +472,27 @@ i18n_urls = [
     url(r'^digest/$', zerver.views.digest.digest_page),
 
     # Registration views, require a confirmation ID.
-    url(r'^accounts/home/', zerver.views.registration.accounts_home,
+    url(r'^accounts/home/$', zerver.views.registration.accounts_home,
         name='zerver.views.registration.accounts_home'),
-    url(r'^accounts/send_confirm/(?P<email>[\S]+)?',
+    url(r'^accounts/send_confirm/(?P<email>[\S]+)?$',
         TemplateView.as_view(template_name='zerver/accounts_send_confirm.html'),
         name='signup_send_confirm'),
-    url(r'^accounts/new/send_confirm/(?P<email>[\S]+)?',
+    url(r'^accounts/new/send_confirm/(?P<email>[\S]+)?$',
         TemplateView.as_view(template_name='zerver/accounts_send_confirm.html'),
         {'realm_creation': True}, name='new_realm_send_confirm'),
-    url(r'^accounts/register/', zerver.views.registration.accounts_register,
+    url(r'^accounts/register/$', zerver.views.registration.accounts_register,
         name='zerver.views.registration.accounts_register'),
-    url(r'^accounts/do_confirm/(?P<confirmation_key>[\w]+)',
+    url(r'^accounts/do_confirm/(?P<confirmation_key>[\w]+)$',
         zerver.views.registration.check_prereg_key_and_redirect,
         name='check_prereg_key_and_redirect'),
 
-    url(r'^accounts/confirm_new_email/(?P<confirmation_key>[\w]+)',
+    url(r'^accounts/confirm_new_email/(?P<confirmation_key>[\w]+)$',
         zerver.views.user_settings.confirm_email_change,
         name='zerver.views.user_settings.confirm_email_change'),
 
     # Email unsubscription endpoint. Allows for unsubscribing from various types of emails,
     # including the welcome emails (day 1 & 2), missed PMs, etc.
-    url(r'^accounts/unsubscribe/(?P<email_type>[\w]+)/(?P<confirmation_key>[\w]+)',
+    url(r'^accounts/unsubscribe/(?P<email_type>[\w]+)/(?P<confirmation_key>[\w]+)$',
         zerver.views.unsubscribe.email_unsubscribe,
         name='zerver.views.unsubscribe.email_unsubscribe'),
 
@@ -512,7 +515,7 @@ i18n_urls = [
         zerver.views.registration.create_realm, name='zerver.views.create_realm'),
 
     # Realm Reactivation
-    url(r'^reactivate/(?P<confirmation_key>[\w]+)', zerver.views.realm.realm_reactivation,
+    url(r'^reactivate/(?P<confirmation_key>[\w]+)$', zerver.views.realm.realm_reactivation,
         name='zerver.views.realm.realm_reactivation'),
 
     # Global public streams (Zulip's way of doing archives)
@@ -536,10 +539,10 @@ i18n_urls = [
     url(r'^integrations/doc-html/(?P<integration_name>[^/]*)$',
         zerver.views.documentation.integration_doc,
         name="zerver.views.documentation.integration_doc"),
-    url(r'^integrations/(.*)', IntegrationView.as_view()),
+    url(r'^integrations/(.*)$', IntegrationView.as_view()),
     url(r'^team/$', zerver.views.users.team_view),
     url(r'^history/$', TemplateView.as_view(template_name='zerver/history.html')),
-    url(r'^apps/(.*)', zerver.views.home.apps_view, name='zerver.views.home.apps_view'),
+    url(r'^apps/(.*)$', zerver.views.home.apps_view, name='zerver.views.home.apps_view'),
     url(r'^plans/$', zerver.views.home.plans_view, name='plans'),
 
     # Landing page, features pages, signup form, etc.
@@ -598,7 +601,7 @@ urls += [
 # having to rewrite URLs, and is implemented using the
 # 'override_api_url_scheme' flag passed to rest_dispatch
 urls += [
-    url(r'^user_uploads/(?P<realm_id_str>(\d*|unk))/(?P<filename>.*)',
+    url(r'^user_uploads/(?P<realm_id_str>(\d*|unk))/(?P<filename>.*)$',
         rest_dispatch,
         {'GET': ('zerver.views.upload.serve_file_backend',
                  {'override_api_url_scheme'})}),
@@ -608,11 +611,11 @@ urls += [
         {'GET': ('zerver.views.thumbnail.backend_serve_thumbnail',
                  {'override_api_url_scheme'})}),
     # Avatars have the same constraint due to `!avatar` syntax.
-    url(r'^avatar/(?P<email_or_id>[\S]+)/(?P<medium>[\S]+)?',
+    url(r'^avatar/(?P<email_or_id>[\S]+)/(?P<medium>[\S]+)?$',
         rest_dispatch,
         {'GET': ('zerver.views.users.avatar',
                  {'override_api_url_scheme'})}),
-    url(r'^avatar/(?P<email_or_id>[\S]+)',
+    url(r'^avatar/(?P<email_or_id>[\S]+)$',
         rest_dispatch,
         {'GET': ('zerver.views.users.avatar',
                  {'override_api_url_scheme'})}),
@@ -627,7 +630,7 @@ urls += url(r'^report/csp_violations$', zerver.views.report.report_csp_violation
 # rendered at the time Zulip used camo for doing http -> https conversion for
 # such links with images previews. Now thumbor can be used for serving such
 # images.
-urls += url(r'^external_content/(?P<digest>[\S]+)/(?P<received_url>[\S]+)',
+urls += url(r'^external_content/(?P<digest>[\S]+)/(?P<received_url>[\S]+)$',
             zerver.views.camo.handle_camo_url,
             name='zerver.views.camo.handle_camo_url'),
 
@@ -646,36 +649,41 @@ urls += [
 
 # Mobile-specific authentication URLs
 urls += [
-    # This json format view used by the mobile apps lists which
-    # authentication backends the server allows as well as details
-    # like the requested subdomains'd realm icon (if known) and
-    # server-specific compatibility.
-    url(r'^api/v1/server_settings', zerver.views.auth.api_get_server_settings),
-    # This is a deprecated old version of api/v1/server_settings that only returns auth backends.
-    url(r'^api/v1/get_auth_backends', zerver.views.auth.api_get_auth_backends,
-        name='zerver.views.auth.api_get_auth_backends'),
-
     # Used as a global check by all mobile clients, which currently send
     # requests to https://zulipchat.com/compatibility almost immediately after
     # starting up.
     url(r'^compatibility$', zerver.views.compatibility.check_global_compatibility),
+]
+
+v1_api_mobile_patterns = [
+    # This json format view used by the mobile apps lists which
+    # authentication backends the server allows as well as details
+    # like the requested subdomains'd realm icon (if known) and
+    # server-specific compatibility.
+    url(r'^server_settings$', zerver.views.auth.api_get_server_settings),
+    # This is a deprecated old version of api/v1/server_settings that only returns auth backends.
+    url(r'^get_auth_backends$', zerver.views.auth.api_get_auth_backends,
+        name='zerver.views.auth.api_get_auth_backends'),
 
     # This json format view used by the mobile apps accepts a username
     # password/pair and returns an API key.
-    url(r'^api/v1/fetch_api_key$', zerver.views.auth.api_fetch_api_key,
+    url(r'^fetch_api_key$', zerver.views.auth.api_fetch_api_key,
         name='zerver.views.auth.api_fetch_api_key'),
 
     # This is for the signing in through the devAuthBackEnd on mobile apps.
-    url(r'^api/v1/dev_fetch_api_key$', zerver.views.auth.api_dev_fetch_api_key,
+    url(r'^dev_fetch_api_key$', zerver.views.auth.api_dev_fetch_api_key,
         name='zerver.views.auth.api_dev_fetch_api_key'),
     # This is for fetching the emails of the admins and the users.
-    url(r'^api/v1/dev_list_users$', zerver.views.auth.api_dev_list_users,
+    url(r'^dev_list_users$', zerver.views.auth.api_dev_list_users,
         name='zerver.views.auth.api_dev_list_users'),
 
     # Used to present the GOOGLE_CLIENT_ID to mobile apps
-    url(r'^api/v1/fetch_google_client_id$',
+    url(r'^fetch_google_client_id$',
         zerver.views.auth.api_fetch_google_client_id,
         name='zerver.views.auth.api_fetch_google_client_id'),
+]
+urls += [
+    url(r'^api/v1/', include(v1_api_mobile_patterns)),
 ]
 
 # View for uploading messages from email mirror

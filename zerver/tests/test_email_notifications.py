@@ -241,8 +241,8 @@ class TestMissedMessages(ZulipTestCase):
             '@**King Hamlet**')
 
         if show_message_content:
-            body = ("Othello, the Moor of Venice --- 1 2 3 4 5 6 7 8 9 10 @**King Hamlet** "
-                    "You are receiving this email because you were mentioned")
+            body = ("Othello, the Moor of Venice: 1 2 3 4 5 6 7 8 9 10 @**King Hamlet** -- "
+                    "You are receiving this because you were mentioned in Zulip Dev.")
             email_subject = '#Denmark > test'
             verify_body_does_not_include = []  # type: List[str]
         else:
@@ -258,6 +258,39 @@ class TestMissedMessages(ZulipTestCase):
                          trigger='mentioned')
 
     @patch('zerver.lib.email_mirror.generate_random_token')
+    def _extra_context_in_missed_stream_messages_wildcard_mention(self, send_as_user: bool,
+                                                                  mock_random_token: MagicMock,
+                                                                  show_message_content: bool=True) -> None:
+        tokens = self._get_tokens()
+        mock_random_token.side_effect = tokens
+
+        for i in range(1, 6):
+            self.send_stream_message(self.example_email('othello'), "Denmark", content=str(i))
+        self.send_stream_message(
+            self.example_email('othello'), "Denmark",
+            '11', topic_name='test2')
+        msg_id = self.send_stream_message(
+            self.example_email('othello'), "denmark",
+            '@**all**')
+
+        if show_message_content:
+            body = ("Othello, the Moor of Venice: 1 2 3 4 5 @**all** -- "
+                    "You are receiving this because you were mentioned in Zulip Dev.")
+            email_subject = '#Denmark > test'
+            verify_body_does_not_include = []  # type: List[str]
+        else:
+            # Test in case if message content in missed email message are disabled.
+            body = 'Manage email preferences: http://zulip.testserver/#settings/notifications'
+            email_subject = 'New missed messages'
+            verify_body_does_not_include = ['Denmark > test', 'Othello, the Moor of Venice',
+                                            '1 2 3 4 5 @**all**', 'private', 'group',
+                                            'Reply to this email directly, or view it in Zulip']
+        self._test_cases(tokens, msg_id, body, email_subject, send_as_user,
+                         show_message_content=show_message_content,
+                         verify_body_does_not_include=verify_body_does_not_include,
+                         trigger='wildcard_mentioned')
+
+    @patch('zerver.lib.email_mirror.generate_random_token')
     def _extra_context_in_missed_stream_messages_email_notify(self, send_as_user: bool,
                                                               mock_random_token: MagicMock) -> None:
         tokens = self._get_tokens()
@@ -271,9 +304,8 @@ class TestMissedMessages(ZulipTestCase):
         msg_id = self.send_stream_message(
             self.example_email('othello'), "denmark",
             '12')
-        body = ("Othello, the Moor of Venice --- 1 2 3 4 5 6 7 8 9 10 12 "
-                "You are receiving this email "
-                "because you have email notifications enabled for this stream.")
+        body = ("Othello, the Moor of Venice: 1 2 3 4 5 6 7 8 9 10 12 -- "
+                "You are receiving this because you have email notifications enabled for this stream.")
         email_subject = '#Denmark > test'
         self._test_cases(tokens, msg_id, body, email_subject, send_as_user, trigger='stream_email_notify')
 
@@ -288,8 +320,8 @@ class TestMissedMessages(ZulipTestCase):
         msg_id = self.send_stream_message(
             self.example_email('othello'), "Denmark",
             '@**King Hamlet**')
-        body = ("Cordelia Lear --- 0 1 2 Othello, the Moor of Venice --- @**King Hamlet** "
-                "You are receiving this email because you were mentioned")
+        body = ("Cordelia Lear: 0 1 2 Othello, the Moor of Venice: @**King Hamlet** -- "
+                "You are receiving this because you were mentioned in Zulip Dev.")
         email_subject = '#Denmark > test'
         self._test_cases(tokens, msg_id, body, email_subject, send_as_user, trigger='mentioned')
 
@@ -366,7 +398,7 @@ class TestMissedMessages(ZulipTestCase):
         )
 
         if show_message_content:
-            body = 'Othello, the Moor of Venice --- Group personal message! Manage email preferences:'
+            body = 'Othello, the Moor of Venice: Group personal message! -- Reply'
             email_subject = 'Group PMs with Iago and Othello, the Moor of Venice'
             verify_body_does_not_include = []  # type: List[str]
         else:
@@ -395,7 +427,7 @@ class TestMissedMessages(ZulipTestCase):
             'Group personal message!',
         )
 
-        body = 'Othello, the Moor of Venice --- Group personal message! Manage email preferences'
+        body = 'Othello, the Moor of Venice: Group personal message! -- Reply'
         email_subject = 'Group PMs with Cordelia Lear, Iago, and Othello, the Moor of Venice'
         self._test_cases(tokens, msg_id, body, email_subject, send_as_user)
 
@@ -412,7 +444,7 @@ class TestMissedMessages(ZulipTestCase):
                                            self.example_email('prospero')],
                                           'Group personal message!')
 
-        body = 'Othello, the Moor of Venice --- Group personal message! Manage email preferences'
+        body = 'Othello, the Moor of Venice: Group personal message! -- Reply'
         email_subject = 'Group PMs with Cordelia Lear, Iago, and 2 others'
         self._test_cases(tokens, msg_id, body, email_subject, send_as_user)
 
@@ -500,6 +532,8 @@ class TestMissedMessages(ZulipTestCase):
                                         "message_content_in_email_notifications", False)
         self._extra_context_in_missed_stream_messages_mention(False, show_message_content=False)
         mail.outbox = []
+        self._extra_context_in_missed_stream_messages_wildcard_mention(False, show_message_content=False)
+        mail.outbox = []
         self._extra_context_in_personal_missed_stream_messages(False, show_message_content=False)
         mail.outbox = []
         self._extra_context_in_huddle_missed_stream_messages_two_others(False, show_message_content=False)
@@ -510,6 +544,13 @@ class TestMissedMessages(ZulipTestCase):
 
     def test_extra_context_in_missed_stream_messages(self) -> None:
         self._extra_context_in_missed_stream_messages_mention(False)
+
+    @override_settings(SEND_MISSED_MESSAGE_EMAILS_AS_USER=True)
+    def test_extra_context_in_missed_stream_messages_as_user_wildcard(self) -> None:
+        self._extra_context_in_missed_stream_messages_wildcard_mention(True)
+
+    def test_extra_context_in_missed_stream_messages_wildcard(self) -> None:
+        self._extra_context_in_missed_stream_messages_wildcard_mention(False)
 
     @override_settings(SEND_MISSED_MESSAGE_EMAILS_AS_USER=True)
     def test_extra_context_in_missed_stream_messages_as_user_two_senders(self) -> None:
@@ -635,12 +676,12 @@ class TestMissedMessages(ZulipTestCase):
         mock_random_token.side_effect = tokens
 
         hamlet = self.example_user('hamlet')
-        hamlet.emojiset = 'apple'
+        hamlet.emojiset = 'twitter'
         hamlet.save(update_fields=['emojiset'])
         msg_id = self.send_personal_message(
             self.example_email('othello'), self.example_email('hamlet'),
             'Extremely personal message with a hamburger :hamburger:!')
-        body = '<img alt=":hamburger:" src="http://zulip.testserver/static/generated/emoji/images-apple-64/1f354.png" title="hamburger" style="height: 20px;">'
+        body = '<img alt=":hamburger:" src="http://zulip.testserver/static/generated/emoji/images-twitter-64/1f354.png" title="hamburger" style="height: 20px;">'
         email_subject = 'PMs with Othello, the Moor of Venice'
         self._test_cases(tokens, msg_id, body, email_subject, send_as_user=False, verify_html_body=True)
 
@@ -657,6 +698,42 @@ class TestMissedMessages(ZulipTestCase):
         body = '<a class="stream" data-stream-id="5" href="{href}">#Verona</a'.format(href=href)
         email_subject = 'PMs with Othello, the Moor of Venice'
         self._test_cases(tokens, msg_id, body, email_subject, send_as_user=False, verify_html_body=True)
+
+    @patch('zerver.lib.email_mirror.generate_random_token')
+    def test_sender_name_in_missed_message(self, mock_random_token: MagicMock) -> None:
+        tokens = self._get_tokens()
+        mock_random_token.side_effect = tokens
+
+        hamlet = self.example_user('hamlet')
+        msg_id_1 = self.send_stream_message(self.example_email('iago'),
+                                            "Denmark",
+                                            '@**King Hamlet**')
+        msg_id_2 = self.send_stream_message(self.example_email('iago'),
+                                            "Verona",
+                                            '* 1\n *2')
+        msg_id_3 = self.send_personal_message(self.example_email('iago'),
+                                              hamlet.email,
+                                              'Hello')
+
+        handle_missedmessage_emails(hamlet.id, [
+            {'message_id': msg_id_1, "trigger": "mentioned"},
+            {'message_id': msg_id_2, "trigger": "stream_email_notify"},
+            {'message_id': msg_id_3},
+        ])
+
+        self.assertIn('Iago: @**King Hamlet**\n\n--\nYou are', mail.outbox[0].body)
+        # If message content starts with <p> tag the sender name is appended inside the <p> tag.
+        self.assertIn('<p><b>Iago</b>: <span class="user-mention"', mail.outbox[0].alternatives[0][0])
+
+        self.assertIn('Iago: * 1\n *2\n\n--\nYou are receiving', mail.outbox[1].body)
+        # If message content does not starts with <p> tag sender name is appended before the <p> tag
+        self.assertIn('       <b>Iago</b>: <ul>\n<li>1<br/>\n *2</li>\n</ul>\n',
+                      mail.outbox[1].alternatives[0][0])
+
+        self.assertEqual('Hello\n\n--\n\nReply', mail.outbox[2].body[:16])
+        # Sender name is not appended to message for PM missed messages
+        self.assertIn('>\n                    \n                        <p>Hello</p>\n',
+                      mail.outbox[2].alternatives[0][0])
 
     @patch('zerver.lib.email_mirror.generate_random_token')
     def test_multiple_missed_personal_messages(self, mock_random_token: MagicMock) -> None:
@@ -814,6 +891,8 @@ class TestMissedMessages(ZulipTestCase):
         self.assertEqual(email_subjects, valid_email_subjects)
 
     def test_relative_to_full_url(self) -> None:
+        zulip_realm = get_realm("zulip")
+        zephyr_realm = get_realm("zephyr")
         # Run `relative_to_full_url()` function over test fixtures present in
         # 'markdown_test_cases.json' and check that it converts all the relative
         # URLs to absolute URLs.
@@ -838,10 +917,12 @@ class TestMissedMessages(ZulipTestCase):
         self.assertEqual(actual_output, expected_output)
 
         # An uploaded file
-        test_data = '<a href="/user_uploads/2/1f/some_random_value">/user_uploads/2/1f/some_random_value</a>'
+        test_data = '<a href="/user_uploads/{realm_id}/1f/some_random_value">/user_uploads/{realm_id}/1f/some_random_value</a>'
+        test_data = test_data.format(realm_id=zephyr_realm.id)
         actual_output = relative_to_full_url("http://example.com", test_data)
-        expected_output = '<a href="http://example.com/user_uploads/2/1f/some_random_value">' + \
-            '/user_uploads/2/1f/some_random_value</a>'
+        expected_output = '<a href="http://example.com/user_uploads/{realm_id}/1f/some_random_value">' + \
+            '/user_uploads/{realm_id}/1f/some_random_value</a>'
+        expected_output = expected_output.format(realm_id=zephyr_realm.id)
         self.assertEqual(actual_output, expected_output)
 
         # A profile picture like syntax, but not actually in an HTML tag
@@ -859,13 +940,15 @@ class TestMissedMessages(ZulipTestCase):
         self.assertEqual(actual_output, expected_output)
 
         # Scrub inline images.
-        test_data = '<p>See this <a href="/user_uploads/1/52/fG7GM9e3afz_qsiUcSce2tl_/avatar_103.jpeg" target="_blank" ' +   \
+        test_data = '<p>See this <a href="/user_uploads/{realm_id}/52/fG7GM9e3afz_qsiUcSce2tl_/avatar_103.jpeg" target="_blank" ' +   \
                     'title="avatar_103.jpeg">avatar_103.jpeg</a>.</p>' +    \
-                    '<div class="message_inline_image"><a href="/user_uploads/1/52/fG7GM9e3afz_qsiUcSce2tl_/avatar_103.jpeg" ' +    \
-                    'target="_blank" title="avatar_103.jpeg"><img src="/user_uploads/1/52/fG7GM9e3afz_qsiUcSce2tl_/avatar_103.jpeg"></a></div>'
+                    '<div class="message_inline_image"><a href="/user_uploads/{realm_id}/52/fG7GM9e3afz_qsiUcSce2tl_/avatar_103.jpeg" ' +    \
+                    'target="_blank" title="avatar_103.jpeg"><img src="/user_uploads/{realm_id}/52/fG7GM9e3afz_qsiUcSce2tl_/avatar_103.jpeg"></a></div>'
+        test_data = test_data.format(realm_id=zulip_realm.id)
         actual_output = relative_to_full_url("http://example.com", test_data)
-        expected_output = '<div><p>See this <a href="http://example.com/user_uploads/1/52/fG7GM9e3afz_qsiUcSce2tl_/avatar_103.jpeg" target="_blank" ' +  \
+        expected_output = '<div><p>See this <a href="http://example.com/user_uploads/{realm_id}/52/fG7GM9e3afz_qsiUcSce2tl_/avatar_103.jpeg" target="_blank" ' +  \
                           'title="avatar_103.jpeg">avatar_103.jpeg</a>.</p></div>'
+        expected_output = expected_output.format(realm_id=zulip_realm.id)
         self.assertEqual(actual_output, expected_output)
 
         # A message containing only an inline image URL preview, we do

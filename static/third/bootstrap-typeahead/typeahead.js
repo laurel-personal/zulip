@@ -17,6 +17,39 @@
  * limitations under the License.
  * ============================================================ */
 
+/* =============================================================
+ * Zulip's custom changes
+ *
+ * 1. Automated selection:
+ *
+ *   This adds support for automatically selecting a typeahead (on certain
+ *   completions or queries). If `this.automated` returns true, we do not
+ *   render the typeahead and directly trigger selection of the current
+ *   choice.
+ *
+ *   Our custom changes include all mentions of this.automated.
+ *
+ * 2. Custom selection triggers:
+ *
+ *   This adds support for completing a typeahead on custom keyup input. By
+ *   default, we only support Tab and Enter to complete a typeahead, but we
+ *   have usecases where we want to complete using custom characters like: >.
+ *
+ *   If `this.trigger_selection` returns true, we complete the typeahead and
+ *   pass the keyup event to the updater.
+ *
+ *   Our custom changes include all mentions of this.trigger_selection.
+ *
+ * 3. Header text:
+ *
+ *   This adds support for showing a custom header text like: "You are now
+ *   completing a user mention". Provide the function `this.header` that
+ *   returns a string containing the header text, or false.
+ *
+ *   Our custom changes include all mentions of this.header, some CSS changes
+ *   in compose.scss and splitting $container out of $menu so we can insert
+ *   additional HTML before $menu.
+ * ============================================================ */
 
 !function($){
 
@@ -33,14 +66,19 @@
     this.sorter = this.options.sorter || this.sorter
     this.highlighter = this.options.highlighter || this.highlighter
     this.updater = this.options.updater || this.updater
-    this.$menu = $(this.options.menu).appendTo('body')
+    this.$container = $(this.options.container).appendTo('body')
+    this.$menu = $(this.options.menu).appendTo(this.$container)
+    this.$header = $(this.options.header_html).appendTo(this.$container)
     this.source = this.options.source
     this.shown = false
     this.dropup = this.options.dropup
     this.fixed = this.options.fixed || false;
+    this.automated = this.options.automated || this.automated;
+    this.trigger_selection = this.options.trigger_selection || this.trigger_selection;
+    this.header = this.options.header || this.header;
 
     if (this.fixed) {
-      this.$menu.css('position', 'fixed');
+      this.$container.css('position', 'fixed');
     }
     // The naturalSearch option causes arrow keys to immediately
     // update the search box with the underlying values from the
@@ -69,6 +107,19 @@
       return item
     }
 
+  , automated: function() {
+    return false;
+  }
+
+  , trigger_selection: function() {
+    return false;
+  }
+
+  , header: function() {
+    // return a string to show in typeahead header or false.
+    return false;
+  }
+
   , show: function () {
       var pos;
 
@@ -88,21 +139,29 @@
 
       var top_pos = pos.top + pos.height
       if (this.dropup) {
-        top_pos = pos.top - this.$menu.outerHeight()
+        top_pos = pos.top - this.$container.outerHeight()
       }
 
-      this.$menu.css({
+      this.$container.css({
         top: top_pos
        , left: pos.left
       })
 
-      this.$menu.show()
+      var header_text = this.header();
+      if (header_text) {
+        this.$header.find('span#typeahead-header-text').html(header_text);
+        this.$header.show();
+      } else {
+        this.$header.hide();
+      }
+
+      this.$container.show()
       this.shown = true
       return this
     }
 
   , hide: function () {
-      this.$menu.hide()
+      this.$container.hide()
       this.shown = false
       return this
     }
@@ -136,7 +195,11 @@
       if (!items.length) {
         return this.shown ? this.hide() : this
       }
-
+      if (this.automated()) {
+        this.select();
+        this.lookup();
+        return this;
+      }
       return this.render(items.slice(0, this.options.items)).show()
     }
 
@@ -289,6 +352,10 @@
           break
 
         default:
+          if (this.trigger_selection(e)) {
+            if (!this.shown) return;
+            this.select(e);
+          }
           this.lookup()
       }
 
@@ -303,7 +370,7 @@
   , blur: function (e) {
       var that = this
       setTimeout(function () {
-        if (!that.$menu.is(':hover')) {
+        if (!that.$container.is(':hover')) {
           that.hide();
         }
       }, 150)
@@ -339,7 +406,9 @@
   $.fn.typeahead.defaults = {
     source: []
   , items: 8
-  , menu: '<ul class="typeahead dropdown-menu"></ul>'
+  , container: '<div class="typeahead dropdown-menu"></div>'
+  , header_html: '<p class="typeahead-header"><span id="typeahead-header-text"></span></p>'
+  , menu: '<ul class="typeahead-menu"></ul>'
   , item: '<li><a href="#"></a></li>'
   , minLength: 1
   , stopAdvance: false

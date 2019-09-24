@@ -49,7 +49,7 @@ class TornadoWebTestCase(AsyncHTTPTestCase, ZulipTestCase):
 
     def tearDown(self) -> None:
         super().tearDown()
-        self.session_cookie = None  # type: Optional[Dict[str, str]]
+        self.session_cookie = None
 
     @override_settings(DEBUG=False)
     def get_app(self) -> Application:
@@ -117,7 +117,7 @@ class EventsTestCase(TornadoWebTestCase):
         event_queue_id = self.create_queue()
         data = {
             'queue_id': event_queue_id,
-            'last_event_id': 0,
+            'last_event_id': -1,
         }
 
         path = '/json/events?{}'.format(urllib.parse.urlencode(data))

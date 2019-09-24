@@ -127,6 +127,10 @@ exports.initialize = function () {
             return;
         }
 
+        if ($(e.target).is(".message_edit_notice")) {
+            return;
+        }
+
         // A tricky issue here is distinguishing hasty clicks (where
         // the mouse might still move a few pixels between mouseup and
         // mousedown) from selecting-for-copy.  We handle this issue
@@ -189,6 +193,67 @@ exports.initialize = function () {
         var local_id = $(this).attr('data-reaction-id');
         var message_id = rows.get_message_id(this);
         reactions.process_reaction_click(message_id, local_id);
+        $(".tooltip").remove();
+    });
+
+    $('body').on('mouseenter', '.message_edit_notice', function (e) {
+        if (page_params.realm_allow_edit_history) {
+            $(e.currentTarget).addClass("message_edit_notice_hover");
+        }
+    });
+
+    $('body').on('mouseleave', '.message_edit_notice', function (e) {
+        if (page_params.realm_allow_edit_history) {
+            $(e.currentTarget).removeClass("message_edit_notice_hover");
+        }
+    });
+
+    $('body').on('click', '.message_edit_notice', function (e) {
+        popovers.hide_all();
+        var message_id = rows.id($(e.currentTarget).closest(".message_row"));
+        var row = current_msg_list.get_row(message_id);
+        var message = current_msg_list.get(rows.id(row));
+        var message_history_cancel_btn = $('#message-history-cancel');
+
+        if (page_params.realm_allow_edit_history) {
+            message_edit.show_history(message);
+            message_history_cancel_btn.focus();
+        }
+        e.stopPropagation();
+        e.preventDefault();
+    });
+
+    // TOOLTIP FOR MESSAGE REACTIONS
+
+    $('#main_div').on('mouseenter', '.message_reaction', function (e) {
+        e.stopPropagation();
+        var elem = $(e.currentTarget);
+        var local_id = elem.attr('data-reaction-id');
+        var message_id = rows.get_message_id(e.currentTarget);
+        var title = reactions.get_reaction_title_data(message_id, local_id);
+
+        elem.tooltip({
+            title: title,
+            trigger: 'hover',
+            placement: 'bottom',
+            animation: false,
+        });
+        elem.tooltip('show');
+        $(".tooltip, .tooltip-inner").css('max-width', "600px");
+        // Remove the arrow from the tooltip.
+        $(".tooltip-arrow").remove();
+    });
+
+    $('#main_div').on('mouseleave', '.message_reaction', function (e) {
+        e.stopPropagation();
+        $(e.currentTarget).tooltip('destroy');
+    });
+
+    // DESTROY PERSISTING TOOLTIPS ON HOVER
+
+    $("body").on('mouseenter', '.tooltip', function (e) {
+        e.stopPropagation();
+        $(e.currentTarget).remove();
     });
 
     $("#main_div").on("click", "a.stream", function (e) {

@@ -81,29 +81,9 @@ $(function () {
         });
     }
 
-    // Code in this block will be executed when the user visits
-    // /accounts/password/reset i.e. reset.html is rendered.
-    if ($("[data-page-id='reset-password-confirm']").length > 0) {
-        common.autofocus('#id_new_password1');
-    }
-
-    // Code in this block will be executed when the user visits
-    // /accounts/password/reset i.e. reset.html is rendered.
-    if ($("[data-page-id='reset-password']").length > 0) {
-        common.autofocus('#id_email');
-    }
-
-    // Code in this block will be executed when the user visits /new
-    // i.e. create_realm.html is rendered.
-    if ($("[data-page-id='create-realm']").length > 0) {
-        common.autofocus('#email');
-    }
-
     // Code in this block will be executed when the user visits /register
     // i.e. accounts_home.html is rendered.
     if ($("[data-page-id='accounts-home']").length > 0) {
-        common.autofocus('#email');
-
         if (window.location.hash.substring(0, 1) === "#") {
             document.email_form.action += window.location.hash;
         }
@@ -118,8 +98,7 @@ $(function () {
             https://stackoverflow.com/questions/5283395/url-hash-is-persisting-between-redirects */
             var email_formaction = $("#login_form").attr('action');
             $("#login_form").attr('action', email_formaction + '/' + window.location.hash);
-            $("#google_login_form input[name='next']").attr('value', '/' + window.location.hash);
-            $("#social_login_form input[name='next']").attr('value', '/' + window.location.hash);
+            $(".social_login_form input[name='next']").attr('value', '/' + window.location.hash);
 
             var sso_address = $("#sso-login").attr('href');
             $("#sso-login").attr('href', sso_address + window.location.hash);
@@ -214,5 +193,10 @@ $(function () {
     $('#id_team_subdomain').on("keyup", function () {
         clearTimeout(timer);
         timer = setTimeout(check_subdomain_avilable, 250, $('#id_team_subdomain').val());
+    });
+
+    // GitHub auth
+    $("body").on("click", "#choose_email .choose-email-box", function () {
+        this.parentNode.submit();
     });
 });

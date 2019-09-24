@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple, Any
+from typing import Optional, Tuple, Any
 
 from django.utils.translation import ugettext as _
 from django.conf import settings
@@ -43,6 +43,17 @@ DEFAULT_EMOJI_SIZE = 64
 # network cost of very large emoji images.
 MAX_EMOJI_GIF_SIZE = 128
 MAX_EMOJI_GIF_FILE_SIZE_BYTES = 128 * 1024 * 1024  # 128 kb
+
+INLINE_MIME_TYPES = [
+    "application/pdf",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    # To avoid cross-site scripting attacks, DO NOT add types such
+    # as application/xhtml+xml, application/x-shockwave-flash,
+    # image/svg+xml, text/html, or text/xml.
+]
 
 # Performance Note:
 #
@@ -245,6 +256,8 @@ class ZulipUploadBackend:
     def upload_export_tarball(self, realm: Realm, tarball_path: str) -> str:
         raise NotImplementedError()
 
+    def delete_export_tarball(self, path_id: str) -> Optional[str]:
+        raise NotImplementedError()
 
 ### S3
 
@@ -274,12 +287,13 @@ def upload_image_to_s3(
     key.set_metadata("user_profile_id", str(user_profile.id))
     key.set_metadata("realm_id", str(user_profile.realm_id))
 
+    headers = {}
     if content_type is not None:
-        headers = {'Content-Type': content_type}  # type: Optional[Dict[str, str]]
-    else:
-        headers = None
+        headers["Content-Type"] = content_type
+    if content_type not in INLINE_MIME_TYPES:
+        headers["Content-Disposition"] = "attachment"
 
-    key.set_contents_from_string(contents, headers=headers)  # type: ignore # https://github.com/python/typeshed/issues/1552
+    key.set_contents_from_string(contents, headers=headers)
 
 def check_upload_within_quota(realm: Realm, uploaded_file_size: int) -> None:
     upload_quota = realm.upload_quota_bytes()
@@ -314,7 +328,7 @@ def get_signed_upload_url(path: str) -> str:
 
 def get_realm_for_filename(path: str) -> Optional[int]:
     conn = S3Connection(settings.S3_KEY, settings.S3_SECRET_KEY)
-    key = get_bucket(conn, settings.S3_AUTH_UPLOADS_BUCKET).get_key(path)
+    key = get_bucket(conn, settings.S3_AUTH_UPLOADS_BUCKET).get_key(path)  # type: Optional[Key]
     if key is None:
         # This happens if the key does not exist.
         return None
@@ -326,7 +340,7 @@ class S3UploadBackend(ZulipUploadBackend):
         bucket = get_bucket(conn, bucket_name)
 
         # check if file exists
-        key = bucket.get_key(path_id)
+        key = bucket.get_key(path_id)  # type: Optional[Key]
         if key is not None:
             bucket.delete_key(key)
             return True
@@ -428,10 +442,10 @@ class S3UploadBackend(ZulipUploadBackend):
         s3_target_file_name = user_avatar_path(target_profile)
 
         key = self.get_avatar_key(s3_source_file_name + ".original")
-        image_data = key.get_contents_as_string()  # type: ignore # https://github.com/python/typeshed/issues/1552
+        image_data = key.get_contents_as_string()
         content_type = key.content_type
 
-        self.write_avatar_images(s3_target_file_name, target_profile, image_data, content_type)  # type: ignore # image_data is `bytes`, boto subs are wrong
+        self.write_avatar_images(s3_target_file_name, target_profile, image_data, content_type)
 
     def get_avatar_url(self, hash_key: str, medium: bool=False) -> str:
         bucket = settings.S3_AVATAR_BUCKET
@@ -518,7 +532,7 @@ class S3UploadBackend(ZulipUploadBackend):
         key = bucket.get_key(file_path + ".original")
         image_data = key.get_contents_as_string()
 
-        resized_medium = resize_avatar(image_data, MEDIUM_AVATAR_SIZE)  # type: ignore # image_data is `bytes`, boto subs are wrong
+        resized_medium = resize_avatar(image_data, MEDIUM_AVATAR_SIZE)
         upload_image_to_s3(
             bucket_name,
             s3_file_name + "-medium.png",
@@ -539,7 +553,7 @@ class S3UploadBackend(ZulipUploadBackend):
         key = bucket.get_key(file_path + ".original")
         image_data = key.get_contents_as_string()
 
-        resized_avatar = resize_avatar(image_data)  # type: ignore # image_data is `bytes`, boto subs are wrong
+        resized_avatar = resize_avatar(image_data)
         upload_image_to_s3(
             bucket_name,
             s3_file_name,
@@ -598,6 +612,10 @@ class S3UploadBackend(ZulipUploadBackend):
             key=key.key)
         return public_url
 
+    def delete_export_tarball(self, path_id: str) -> Optional[str]:
+        if self.delete_file_from_s3(path_id, settings.S3_AVATAR_BUCKET):
+            return path_id
+        return None
 
 ### Local
 
@@ -735,7 +753,8 @@ class LocalUploadBackend(ZulipUploadBackend):
             return
 
         image_path = os.path.join(settings.LOCAL_UPLOADS_DIR, "avatars", file_path + ".original")
-        image_data = open(image_path, "rb").read()
+        with open(image_path, "rb") as f:
+            image_data = f.read()
         resized_medium = resize_avatar(image_data, MEDIUM_AVATAR_SIZE)
         write_local_file('avatars', file_path + '-medium.png', resized_medium)
 
@@ -748,7 +767,8 @@ class LocalUploadBackend(ZulipUploadBackend):
             return
 
         image_path = os.path.join(settings.LOCAL_UPLOADS_DIR, "avatars", file_path + ".original")
-        image_data = open(image_path, "rb").read()
+        with open(image_path, "rb") as f:
+            image_data = f.read()
         resized_avatar = resize_avatar(image_data)
         write_local_file('avatars', file_path + '.png', resized_avatar)
 
@@ -787,6 +807,13 @@ class LocalUploadBackend(ZulipUploadBackend):
         shutil.copy(tarball_path, abs_path)
         public_url = realm.uri + '/user_avatars/' + path
         return public_url
+
+    def delete_export_tarball(self, path_id: str) -> Optional[str]:
+        # Get the last element of a list in the form ['user_avatars', '<file_path>']
+        file_path = path_id.strip('/').split('/', 1)[-1]
+        if delete_local_file('avatars', file_path):
+            return path_id
+        return None
 
 # Common and wrappers
 if settings.LOCAL_UPLOADS_DIR is not None:
@@ -851,3 +878,6 @@ def upload_message_image_from_request(request: HttpRequest, user_file: File,
 
 def upload_export_tarball(realm: Realm, tarball_path: str) -> str:
     return upload_backend.upload_export_tarball(realm, tarball_path)
+
+def delete_export_tarball(path_id: str) -> Optional[str]:
+    return upload_backend.delete_export_tarball(path_id)

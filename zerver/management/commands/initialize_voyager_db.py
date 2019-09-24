@@ -1,10 +1,10 @@
-
 from argparse import ArgumentParser
 from typing import Any, Iterable, Tuple, Optional
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from zerver.lib.actions import do_change_is_admin
 from zerver.lib.bulk_create import bulk_create_users
 from zerver.models import Realm, UserProfile, \
     email_to_username, get_client, get_system_bot
@@ -32,7 +32,7 @@ class Command(BaseCommand):
         if Realm.objects.count() > 0:
             print("Database already initialized; doing nothing.")
             return
-        realm = Realm.objects.create(string_id=settings.INTERNAL_BOT_DOMAIN.split('.')[0])
+        realm = Realm.objects.create(string_id=settings.SYSTEM_BOT_REALM)
 
         names = [(settings.FEEDBACK_BOT_NAME, settings.FEEDBACK_BOT)]
         create_users(realm, names, bot_type=UserProfile.DEFAULT_BOT)
@@ -51,8 +51,7 @@ class Command(BaseCommand):
 
         # Initialize the email gateway bot as an API Super User
         email_gateway_bot = get_system_bot(settings.EMAIL_GATEWAY_BOT)
-        email_gateway_bot.is_api_super_user = True
-        email_gateway_bot.save()
+        do_change_is_admin(email_gateway_bot, True, permission="api_super_user")
 
         self.stdout.write("Successfully populated database with initial data.\n")
         self.stdout.write("Please run ./manage.py generate_realm_creation_link "

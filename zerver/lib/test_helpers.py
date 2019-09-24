@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from typing import (
     Any, Callable, Dict, Generator, Iterable, Iterator, List, Mapping,
-    Optional, Tuple, Union, IO, TypeVar
+    Optional, Tuple, Union, IO, TypeVar, TYPE_CHECKING
 )
 
 from django.core import signing
@@ -38,7 +38,7 @@ from zerver.models import (
     UserProfile,
 )
 
-if False:
+if TYPE_CHECKING:
     # Avoid an import cycle; we only need these for type annotations.
     from zerver.lib.test_classes import ZulipTestCase, MigrationsTestCase
 
@@ -403,6 +403,7 @@ def write_instrumentation_reports(full_suite: bool, include_webhooks: bool) -> N
             'node-coverage/(?P<path>.*)',
             'docs/(?P<path>.*)',
             'casper/(?P<path>.*)',
+            'static/(?P<path>.*)',
         ] + [webhook.url for webhook in WEBHOOK_INTEGRATIONS if not include_webhooks])
 
         untested_patterns -= exempt_patterns
@@ -594,3 +595,9 @@ def use_db_models(method: Callable[..., None]) -> Callable[..., None]:  # nocove
                 zerver_test_classes_patch:
             method(self, apps)
     return method_patched_with_mock
+
+def create_dummy_file(filename: str) -> str:
+    filepath = os.path.join(settings.TEST_WORKER_DIR, filename)
+    with open(filepath, 'w') as f:
+        f.write('zulip!')
+    return filepath

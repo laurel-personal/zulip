@@ -130,6 +130,7 @@ DEFAULT_SETTINGS = {
     'ADD_TOKENS_TO_NOREPLY_ADDRESS': True,
     'TOKENIZED_NOREPLY_EMAIL_ADDRESS': "noreply-{token}@" + EXTERNAL_HOST.split(":")[0],
     'PHYSICAL_ADDRESS': '',
+    'FAKE_EMAIL_DOMAIN': EXTERNAL_HOST.split(":")[0],
 
     # SMTP settings
     'EMAIL_HOST': None,
@@ -154,11 +155,13 @@ DEFAULT_SETTINGS = {
     # Social auth; we support providing values for some of these
     # settings in zulip-secrets.conf instead of settings.py in development.
     'SOCIAL_AUTH_GITHUB_KEY': get_secret('social_auth_github_key', development_only=True),
-    'GOOGLE_OAUTH2_CLIENT_ID': get_secret('google_oauth2_client_id', development_only=True),
     'SOCIAL_AUTH_GITHUB_ORG_NAME': None,
     'SOCIAL_AUTH_GITHUB_TEAM_ID': None,
     'SOCIAL_AUTH_SUBDOMAIN': None,
     'SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET': get_secret('azure_oauth2_secret'),
+    'SOCIAL_AUTH_GOOGLE_KEY': get_secret('social_auth_google_key', development_only=True),
+    # Historical name for SOCIAL_AUTH_GITHUB_KEY; still allowed in production.
+    'GOOGLE_OAUTH2_CLIENT_ID': None,
 
     # Other auth
     'SSO_APPEND_DOMAIN': None,
@@ -281,7 +284,7 @@ DEFAULT_SETTINGS.update({
     # SYSTEM_BOT_REALM would be a constant always set to 'zulip',
     # except that it isn't that on zulipchat.com.  We will likely do a
     # migration and eliminate this parameter in the future.
-    'SYSTEM_BOT_REALM': 'zulip',
+    'SYSTEM_BOT_REALM': 'zulipinternal',
 
     # Structurally, we will probably eventually merge
     # analytics into part of the main server, rather
@@ -574,7 +577,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.staticfiles',
     'confirmation',
-    'pipeline',
     'webpack_loader',
     'zerver',
     'social_django',
@@ -612,12 +614,42 @@ SILENCED_SYSTEM_CHECKS = [
 # DATABASE CONFIGURATION
 ########################################################################
 
+# Zulip's Django configuration supports 4 different ways to do
+# postgres authentication:
+#
+# * The development environment uses the `local_database_password`
+#   secret from `zulip-secrets.conf` to authenticate with a local
+#   database.  The password is automatically generated and managed by
+#   `generate_secrets.py` during or provision.
+#
+# The remaining 3 options are for production use:
+#
+# * Using postgres' "peer" authentication to authenticate to a
+#   database on the local system using one's user ID (processes
+#   running as user `zulip` on the system are automatically
+#   authenticated as database user `zulip`).  This is the default in
+#   production.  We don't use this in the development environment,
+#   because it requires the developer's user to be called `zulip`.
+#
+# * Using password authentication with a remote postgres server using
+#   the `REMOTE_POSTGRES_HOST` setting and the password from the
+#   `postgres_password` secret.
+#
+# * Using passwordless authentication with a remote postgres server
+#   using the `REMOTE_POSTGRES_HOST` setting and a client certificate
+#   under `/home/zulip/.postgresql/`.
+#
+# We implement these options with a default DATABASES configuration
+# supporting peer authentication, with logic to override it as
+# appropriate if DEVELOPMENT or REMOTE_POSTGRES_HOST is set.
 DATABASES = {"default": {
     'ENGINE': 'django.db.backends.postgresql',
     'NAME': 'zulip',
     'USER': 'zulip',
-    'PASSWORD': '',  # Authentication done via certificates
-    'HOST': '',  # Host = '' => connect through a local socket
+    # Password = '' => peer/certificate authentication (no password)
+    'PASSWORD': '',
+    # Host = '' => connect to localhost by default
+    'HOST': '',
     'SCHEMA': 'zulip',
     'CONN_MAX_AGE': 600,
     'OPTIONS': {
@@ -769,8 +801,6 @@ if LOCAL_UPLOADS_DIR is not None:
 # https://cloud.google.com/console/project/apps~zulip-android/apiui/credential
 ANDROID_GCM_API_KEY = get_secret("android_gcm_api_key")
 
-GOOGLE_OAUTH2_CLIENT_SECRET = get_secret('google_oauth2_client_secret')
-
 DROPBOX_APP_KEY = get_secret("dropbox_app_key")
 
 MAILCHIMP_API_KEY = get_secret("mailchimp_api_key")
@@ -828,11 +858,6 @@ for bot in INTERNAL_BOTS + REALM_INTERNAL_BOTS + DISABLED_REALM_INTERNAL_BOTS:
         bot_email = bot['email_template'] % (INTERNAL_BOT_DOMAIN,)
         vars()[bot['var_name']] = bot_email
 
-if EMAIL_GATEWAY_PATTERN != "":
-    EMAIL_GATEWAY_EXAMPLE = EMAIL_GATEWAY_PATTERN % ("support+abcdefg",)
-else:
-    EMAIL_GATEWAY_EXAMPLE = ""
-
 ########################################################################
 # STATSD CONFIGURATION
 ########################################################################
@@ -858,7 +883,7 @@ if CAMO_URI != '':
 
 STATIC_URL = '/static/'
 
-# ZulipStorage is a modified version of PipelineCachedStorage,
+# ZulipStorage is a modified version of ManifestStaticFilesStorage,
 # and, like that class, it inserts a file hash into filenames
 # to prevent the browser from using stale files from cache.
 #
@@ -866,26 +891,8 @@ STATIC_URL = '/static/'
 # STATIC_ROOT even for dev servers.  So we only use
 # ZulipStorage when not DEBUG.
 
-# This is the default behavior from Pipeline, but we set it
-# here so that urls.py can read it.
-PIPELINE_ENABLED = not DEBUG
-
-if DEBUG:
-    STATICFILES_STORAGE = 'pipeline.storage.PipelineStorage'
-    STATICFILES_FINDERS = (
-        'django.contrib.staticfiles.finders.AppDirectoriesFinder',
-        'pipeline.finders.PipelineFinder',
-    )
-    if PIPELINE_ENABLED:
-        STATIC_ROOT = os.path.abspath(os.path.join(DEPLOY_ROOT, 'prod-static/serve'))
-    else:
-        STATIC_ROOT = os.path.abspath(os.path.join(DEPLOY_ROOT, 'static/'))
-else:
+if not DEBUG:
     STATICFILES_STORAGE = 'zerver.lib.storage.ZulipStorage'
-    STATICFILES_FINDERS = (
-        'django.contrib.staticfiles.finders.FileSystemFinder',
-        'pipeline.finders.PipelineFinder',
-    )
     if PRODUCTION:
         STATIC_ROOT = '/home/zulip/prod-static'
     else:
@@ -900,24 +907,7 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 0
 
 STATICFILES_DIRS = ['static/']
 
-# To use minified files in dev, set PIPELINE_ENABLED = True.  For the full
-# cache-busting behavior, you must also set DEBUG = False.
-#
-# You will need to run update-prod-static after changing
-# static files.
-#
-# Useful reading on how this works is in
-# https://zulip.readthedocs.io/en/latest/subsystems/front-end-build-process.html
-
-PIPELINE = {
-    'PIPELINE_ENABLED': PIPELINE_ENABLED,
-    'CSS_COMPRESSOR': 'pipeline.compressors.yui.YUICompressor',
-    'YUI_BINARY': '/usr/bin/env yui-compressor',
-    'STYLESHEETS': {},
-    'JAVASCRIPT': {},
-}
-
-if DEVELOPMENT:
+if DEBUG:
     WEBPACK_STATS_FILE = os.path.join('var', 'webpack-stats-dev.json')
 else:
     WEBPACK_STATS_FILE = 'webpack-stats-production.json'
@@ -949,7 +939,6 @@ base_template_engine_settings = {
         'extensions': [
             'jinja2.ext.i18n',
             'jinja2.ext.autoescape',
-            'pipeline.jinja2.PipelineExtension',
             'webpack_loader.contrib.jinja2ext.WebpackExtension',
         ],
         'context_processors': [
@@ -968,7 +957,7 @@ default_template_engine_settings.update({
         # The webhook integration templates
         os.path.join(DEPLOY_ROOT, 'zerver', 'webhooks'),
         # The python-zulip-api:zulip_bots package templates
-        os.path.join(STATIC_ROOT, 'generated', 'bots'),
+        os.path.join('static' if DEBUG else STATIC_ROOT, 'generated', 'bots'),
     ],
     'APP_DIRS': True,
 })
@@ -1027,6 +1016,7 @@ ZULIP_PATHS = [
     ("ANALYTICS_LOG_PATH", "/var/log/zulip/analytics.log"),
     ("ANALYTICS_LOCK_DIR", "/home/zulip/deployments/analytics-lock-dir"),
     ("API_KEY_ONLY_WEBHOOK_LOG_PATH", "/var/log/zulip/webhooks_errors.log"),
+    ("WEBHOOK_UNEXPECTED_EVENTS_LOG_PATH", "/var/log/zulip/webhooks_unexpected_events.log"),
     ("SOFT_DEACTIVATION_LOG_PATH", "/var/log/zulip/soft_deactivation.log"),
     ("TRACEMALLOC_DUMP_DIR", "/var/log/zulip/tracemalloc"),
     ("SCHEDULED_MESSAGE_DELIVERER_LOG_PATH",
@@ -1258,6 +1248,11 @@ LOGGING = {
             'handlers': ['file', 'errors_file'],
             'propagate': False,
         },
+        'zulip.zerver.lib.webhooks.common': {
+            'level': 'DEBUG',
+            'handlers': ['file', 'errors_file'],
+            'propagate': False,
+        },
         'zulip.zerver.webhooks': {
             'level': 'DEBUG',
             'handlers': ['file', 'errors_file'],
@@ -1351,6 +1346,14 @@ SOCIAL_AUTH_GITHUB_ORG_SECRET = SOCIAL_AUTH_GITHUB_SECRET
 SOCIAL_AUTH_GITHUB_TEAM_KEY = SOCIAL_AUTH_GITHUB_KEY
 SOCIAL_AUTH_GITHUB_TEAM_SECRET = SOCIAL_AUTH_GITHUB_SECRET
 
+SOCIAL_AUTH_GOOGLE_SECRET = get_secret('social_auth_google_secret')
+# Fallback to google-oauth settings in case social auth settings for
+# google are missing; this is for backwards-compatibility with older
+# Zulip versions where /etc/zulip/settings.py has not been migrated yet.
+GOOGLE_OAUTH2_CLIENT_SECRET = get_secret('google_oauth2_client_secret')
+SOCIAL_AUTH_GOOGLE_KEY = SOCIAL_AUTH_GOOGLE_KEY or GOOGLE_OAUTH2_CLIENT_ID
+SOCIAL_AUTH_GOOGLE_SECRET = SOCIAL_AUTH_GOOGLE_SECRET or GOOGLE_OAUTH2_CLIENT_SECRET
+
 SOCIAL_AUTH_PIPELINE = [
     'social_core.pipeline.social_auth.social_details',
     'zproject.backends.social_auth_associate_user',
@@ -1400,10 +1403,7 @@ CROSS_REALM_BOT_EMAILS = {
     'feedback@zulip.com',
     'notification-bot@zulip.com',
     'welcome-bot@zulip.com',
-    'new-user-bot@zulip.com',
     'emailgateway@zulip.com',
 }
-
-CONTRIBUTORS_DATA = os.path.join(STATIC_ROOT, 'generated/github-contributors.json')
 
 THUMBOR_KEY = get_secret('thumbor_key')

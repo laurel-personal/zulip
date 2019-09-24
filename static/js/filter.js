@@ -356,6 +356,12 @@ Filter.prototype = {
             .value();
     },
 
+    has_negated_operand: function (operator, operand) {
+        return _.any(this._operators, function (elem) {
+            return elem.negated && (elem.operator === operator && elem.operand === operand);
+        });
+    },
+
     has_operand: function (operator, operand) {
         return _.any(this._operators, function (elem) {
             return !elem.negated && (elem.operator === operator && elem.operand === operand);
@@ -375,6 +381,12 @@ Filter.prototype = {
         return this.has_operator('search');
     },
 
+    can_mark_messages_read: function () {
+        return !this.has_operator('search');
+    },
+    allow_use_first_unread_when_narrowing: function () {
+        return this.can_mark_messages_read() || this.has_operator('is');
+    },
     can_apply_locally: function () {
         if (this.is_search()) {
             // The semantics for matching keywords are implemented
@@ -388,6 +400,11 @@ Filter.prototype = {
             // See #6186 to see why we currently punt on 'has:foo'
             // queries.  This can be fixed, there are just some random
             // complications that make it non-trivial.
+            return false;
+        }
+
+        if (this.has_operator('streams') ||
+            this.has_negated_operand('streams', 'public')) {
             return false;
         }
 
@@ -548,6 +565,7 @@ Filter.term_type = function (term) {
 
 Filter.sorted_term_types = function (term_types) {
     var levels = [
+        'streams',
         'stream', 'topic',
         'pm-with', 'group-pm-with', 'sender',
         'near', 'id',
@@ -590,7 +608,8 @@ Filter.operator_to_prefix = function (operator, negated) {
     switch (operator) {
     case 'stream':
         return verb + 'stream';
-
+    case 'streams':
+        return verb + 'streams';
     case 'near':
         return verb + 'messages around';
 

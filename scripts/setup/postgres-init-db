@@ -20,7 +20,7 @@ if [[ $records -gt 200 ]]
 then
     set +x
     echo "WARNING: This will delete your Zulip database which currently contains $records messages."
-    read -p "Do you want to proceed? " -n 1 -r
+    read -p "Do you want to proceed? [y/N] " -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]
     then
@@ -48,7 +48,7 @@ su "$POSTGRES_USER" -c 'psql -v ON_ERROR_STOP=1 -e' <<EOF
 DROP DATABASE IF EXISTS zulip;
 EOF
 
-"$(dirname "$0")/postgres-create-db"
+su "$POSTGRES_USER" -c 'psql -v ON_ERROR_STOP=1 -e' < "$(dirname "$0")/create-db.sql"
 )
 
 # Clear memcached to avoid contamination from previous database state

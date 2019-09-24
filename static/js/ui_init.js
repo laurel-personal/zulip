@@ -14,7 +14,6 @@ function message_unhover() {
         return;
     }
     current_message_hover.find('span.edit_content').html("");
-    current_message_hover.removeClass('message_hovered');
     current_message_hover = undefined;
 }
 
@@ -31,7 +30,6 @@ function message_hover(message_row) {
     }
     message = current_msg_list.get(rows.id(message_row));
     message_unhover();
-    message_row.addClass('message_hovered');
     current_message_hover = message_row;
 
     if (!message_edit.is_topic_editable(message)) {
@@ -44,7 +42,7 @@ function message_hover(message_row) {
         !message.status_message) {
         message_row.find(".edit_content").html('<i class="fa fa-pencil edit_content_button" aria-hidden="true" title="Edit (e)"></i>');
     } else {
-        message_row.find(".edit_content").html('<i class="fa fa-file-text-o edit_content_button" aria-hidden="true" title="View source (e)" data-msgid="' + id + '"></i>');
+        message_row.find(".edit_content").html('<i class="fa fa-file-text-o edit_content_button" aria-hidden="true" title="View source (e)" data-message-id="' + id + '"></i>');
     }
 }
 
