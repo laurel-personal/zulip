@@ -259,6 +259,10 @@ class ZulipUploadBackend:
     def delete_export_tarball(self, path_id: str) -> Optional[str]:
         raise NotImplementedError()
 
+    def get_export_tarball_url(self, realm: Realm, export_path: str) -> str:
+        raise NotImplementedError()
+
+
 ### S3
 
 def get_bucket(conn: S3Connection, bucket_name: str) -> Bucket:
@@ -335,9 +339,11 @@ def get_realm_for_filename(path: str) -> Optional[int]:
     return get_user_profile_by_id(key.metadata["user_profile_id"]).realm_id
 
 class S3UploadBackend(ZulipUploadBackend):
+    def __init__(self) -> None:
+        self.connection = S3Connection(settings.S3_KEY, settings.S3_SECRET_KEY)
+
     def delete_file_from_s3(self, path_id: str, bucket_name: str) -> bool:
-        conn = S3Connection(settings.S3_KEY, settings.S3_SECRET_KEY)
-        bucket = get_bucket(conn, bucket_name)
+        bucket = get_bucket(self.connection, bucket_name)
 
         # check if file exists
         key = bucket.get_key(path_id)  # type: Optional[Key]
@@ -430,9 +436,7 @@ class S3UploadBackend(ZulipUploadBackend):
         self.delete_file_from_s3(path_id, bucket_name)
 
     def get_avatar_key(self, file_name: str) -> Key:
-        conn = S3Connection(settings.S3_KEY, settings.S3_SECRET_KEY)
-        bucket_name = settings.S3_AVATAR_BUCKET
-        bucket = get_bucket(conn, bucket_name)
+        bucket = get_bucket(self.connection, settings.S3_AVATAR_BUCKET)
 
         key = bucket.get_key(file_name)
         return key
@@ -451,7 +455,13 @@ class S3UploadBackend(ZulipUploadBackend):
         bucket = settings.S3_AVATAR_BUCKET
         medium_suffix = "-medium.png" if medium else ""
         # ?x=x allows templates to append additional parameters with &s
-        return "https://%s.s3.amazonaws.com/%s%s?x=x" % (bucket, hash_key, medium_suffix)
+        return "https://%s.%s/%s%s?x=x" % (bucket, self.connection.DefaultHost,
+                                           hash_key, medium_suffix)
+
+    def get_export_tarball_url(self, realm: Realm, export_path: str) -> str:
+        bucket = settings.S3_AVATAR_BUCKET
+        # export_path has a leading /
+        return "https://%s.s3.amazonaws.com%s" % (bucket, export_path)
 
     def upload_realm_icon_image(self, icon_file: File, user_profile: UserProfile) -> None:
         content_type = guess_type(icon_file.name)[0]
@@ -481,7 +491,8 @@ class S3UploadBackend(ZulipUploadBackend):
     def get_realm_icon_url(self, realm_id: int, version: int) -> str:
         bucket = settings.S3_AVATAR_BUCKET
         # ?x=x allows templates to append additional parameters with &s
-        return "https://%s.s3.amazonaws.com/%s/realm/icon.png?version=%s" % (bucket, realm_id, version)
+        return "https://%s.%s/%s/realm/icon.png?version=%s" % (
+            bucket, self.connection.DefaultHost, realm_id, version)
 
     def upload_realm_logo_image(self, logo_file: File, user_profile: UserProfile,
                                 night: bool) -> None:
@@ -520,15 +531,15 @@ class S3UploadBackend(ZulipUploadBackend):
             file_name = 'logo.png'
         else:
             file_name = 'night_logo.png'
-        return "https://%s.s3.amazonaws.com/%s/realm/%s?version=%s" % (bucket, realm_id, file_name, version)
+        return "https://%s.%s/%s/realm/%s?version=%s" % (
+            bucket, self.connection.DefaultHost, realm_id, file_name, version)
 
     def ensure_medium_avatar_image(self, user_profile: UserProfile) -> None:
         file_path = user_avatar_path(user_profile)
         s3_file_name = file_path
 
         bucket_name = settings.S3_AVATAR_BUCKET
-        conn = S3Connection(settings.S3_KEY, settings.S3_SECRET_KEY)
-        bucket = get_bucket(conn, bucket_name)
+        bucket = get_bucket(self.connection, bucket_name)
         key = bucket.get_key(file_path + ".original")
         image_data = key.get_contents_as_string()
 
@@ -548,8 +559,7 @@ class S3UploadBackend(ZulipUploadBackend):
         s3_file_name = file_path
 
         bucket_name = settings.S3_AVATAR_BUCKET
-        conn = S3Connection(settings.S3_KEY, settings.S3_SECRET_KEY)
-        bucket = get_bucket(conn, bucket_name)
+        bucket = get_bucket(self.connection, bucket_name)
         key = bucket.get_key(file_path + ".original")
         image_data = key.get_contents_as_string()
 
@@ -592,7 +602,7 @@ class S3UploadBackend(ZulipUploadBackend):
         bucket = settings.S3_AVATAR_BUCKET
         emoji_path = RealmEmoji.PATH_ID_TEMPLATE.format(realm_id=realm_id,
                                                         emoji_file_name=emoji_file_name)
-        return "https://%s.s3.amazonaws.com/%s" % (bucket, emoji_path)
+        return "https://%s.%s/%s" % (bucket, self.connection.DefaultHost, emoji_path)
 
     def upload_export_tarball(self, realm: Optional[Realm], tarball_path: str) -> str:
         def percent_callback(complete: Any, total: Any) -> None:
@@ -814,6 +824,10 @@ class LocalUploadBackend(ZulipUploadBackend):
         if delete_local_file('avatars', file_path):
             return path_id
         return None
+
+    def get_export_tarball_url(self, realm: Realm, export_path: str) -> str:
+        # export_path has a leading `/`
+        return realm.uri + export_path
 
 # Common and wrappers
 if settings.LOCAL_UPLOADS_DIR is not None:
